@@ -71,6 +71,17 @@
   }
   @keyframes blink { 50% { opacity: 0.55; } }
 
+  #hudPower { display: flex; justify-content: center; gap: 8px; margin-top: 8px; }
+  .power {
+    display: flex; align-items: center; gap: 8px; background: rgba(10,12,22,0.6); border-radius: 999px;
+    padding: 5px 12px 5px 6px; font-weight: 900; font-size: 13px; letter-spacing: 0.06em; border: 2px solid var(--pc);
+    box-shadow: 0 0 14px color-mix(in srgb, var(--pc) 55%, transparent);
+  }
+  .power .dot { width: 22px; height: 22px; border-radius: 50%; background: var(--pc); display: grid; place-items: center; font-size: 13px; }
+  .power .bar { width: 64px; height: 6px; border-radius: 3px; background: rgba(255,255,255,0.18); overflow: hidden; }
+  .power .bar i { display: block; height: 100%; width: 100%; background: var(--pc); transform-origin: left center; }
+  #slowmoFx { background: radial-gradient(ellipse at center, transparent 55%, rgba(80,140,255,0.35) 100%); }
+  #invulnFx { background: radial-gradient(ellipse at center, transparent 60%, rgba(255,210,80,0.3) 100%); }
   .floater {
     position: fixed; left: 0; top: 0; font-weight: 900; font-size: 22px; color: #ffd166; white-space: nowrap;
     text-shadow: 0 2px 0 #7a3b00, 0 0 12px rgba(255,180,60,0.7); opacity: 0; pointer-events: none;
@@ -119,7 +130,13 @@
     <div class="pill" id="hudMiles"><small id="hudMilesLabel">TO GAME NIGHT</small><span id="hudMilesVal">3.00 mi</span></div>
     <div class="pill" id="hudSpeed"><small>MPH</small><span id="hudSpeedVal">70</span></div>
   </div>
+  <div id="hudPower">
+    <div class="power hidden" id="hudShield" style="--pc:#3aa0ff"><span class="dot">🛡</span>FULL COVERAGE</div>
+    <div class="power hidden" id="hudEffect" style="--pc:#ffd166"><span class="dot" id="hudEffectIcon"></span><span id="hudEffectName"></span><span class="bar"><i id="hudEffectBar"></i></span></div>
+  </div>
 </div>
+<div id="slowmoFx" class="layer hidden"></div>
+<div id="invulnFx" class="layer hidden"></div>
 
 <div id="titleScreen" class="layer screen">
   <h1 class="title">Pedro Makes It <span>to Game Night</span></h1>
@@ -240,6 +257,19 @@ const CONFIG = {
   lateDodgeSec: 0.3,           // leaving a car's lane this soon before it reaches Pedro also counts
   milestoneBonus: 1000,        // awarded on reaching milestoneMiles
   bannerSec: 4,                // how long the game-night banner stays up
+
+  // --- Power-ups (spawn in open lanes; never count as blockers) ---
+  powerupChance: 0.08,         // chance per spawn row
+  powerupMinMiles: 0.2,        // none before this distance
+  powerupMinGapMeters: 450,    // minimum spacing between power-ups
+  powerupWeights: [1, 1, 0.8, 1], // Full Coverage, Brake Check, Fresh Detail, Carpool
+  brakeCheckSec: 4,            // slow-motion duration (real seconds)
+  brakeCheckScale: 0.5,        // world time scale during Brake Check
+  freshDetailSec: 5,           // invincibility duration
+  carpoolSec: 8,               // score multiplier duration
+  carpoolMultiplier: 2,
+  plowPoints: 25,              // points per car plowed aside during Fresh Detail
+  shieldGraceSec: 1.0,         // invulnerability after Full Coverage absorbs a crash
 
   // --- Crash ---
   crashSlowmo: 0.25,           // time scale during the crash
@@ -370,7 +400,7 @@ const PedroCore = (() => {
       vis: null, hit: false, bounced: false, nearMissed: false, minDx: 99, entered: false, lateDodge: false, bx: 0, by: 0, bz: 0, bvx: 0, bvy: 0, bvz: 0, spin: 0, ry: 0, fade: 1,
     });
     const rows = [];
-    for (let i = 0; i < ROWS; i++) rows.push({ index: -1, A: 0, B: 0, g: 0, gPrev: 0, budget: 0, count: 0, fallback: false });
+    for (let i = 0; i < ROWS; i++) rows.push({ index: -1, A: 0, B: 0, g: 0, gPrev: 0, budget: 0, count: 0, mask: 0, fallback: false });
     // Ring of recently committed hazards, for drive-through (ghost) checks.
     const rType = new Int8Array(RECENT), rLaneMask = new Int8Array(RECENT), rSigma = new Float64Array(RECENT);
     let rHead = 0, rCount = 0;
@@ -383,7 +413,7 @@ const PedroCore = (() => {
 
     const st = {
       seed, rng, hazards, rows, rowCount: 0, lastB: (startSigma || 0) + CONFIG.startClearMeters, lastG: startLane,
-      fallbacks: 0, retries: 0, nextId: 1,
+      fallbacks: 0, retries: 0, nextId: 1, lastPowerSigma: -Infinity,
       horizon: CONFIG.spawnAheadMeters / (1 - CONFIG.trafficSpeedFrac),
     };
 
@@ -484,7 +514,7 @@ const PedroCore = (() => {
 
       const g = openLanes[Math.floor(rng() * nOpen)];
       const row = rows[st.rowCount % ROWS];
-      row.index = st.rowCount; row.A = A; row.B = B; row.g = g; row.gPrev = gPrev; row.budget = budget; row.count = count; row.fallback = fallback;
+      row.index = st.rowCount; row.A = A; row.B = B; row.g = g; row.gPrev = gPrev; row.budget = budget; row.count = count; row.mask = mask; row.fallback = fallback;
 
       for (let i = 0; i < count; i++) {
         const h = allocHazard();
@@ -501,6 +531,35 @@ const PedroCore = (() => {
         rType[rHead] = type; rLaneMask[rHead] = (1 << h.lane) | (1 << h.lane2); rSigma[rHead] = h.sigma;
         rHead = (rHead + 1) % RECENT; if (rCount < RECENT) rCount++;
       }
+      // Power-up (non-blocking) in an open lane, preferring the guaranteed one
+      const miles2 = A / METERS_PER_MILE;
+      const rollP = rng(), rollLane = rng(), rollKind = rng();
+      if (miles2 >= CONFIG.powerupMinMiles && A - st.lastPowerSigma >= CONFIG.powerupMinGapMeters && rollP < CONFIG.powerupChance) {
+        let lane = g;
+        if (rollLane > 0.6) {
+          let nFree = 0;
+          for (let l = 0; l < CONFIG.lanes; l++) if (!(mask & (1 << l))) openLanes[nFree++] = l;
+          lane = openLanes[Math.floor(((rollLane - 0.6) / 0.4) * nFree) % nFree];
+        }
+        const sigmaP = count ? (A + B) / 2 : A;
+        const h = ghostOk(T.POWERUP, 1 << lane, sigmaP) ? allocHazard() : null;
+        if (h) {
+          const W = CONFIG.powerupWeights;
+          let r = rollKind * (W[0] + W[1] + W[2] + W[3]), kind = 0;
+          while (kind < 3 && r >= W[kind]) { r -= W[kind]; kind++; }
+          const sz = typeSize(T.POWERUP);
+          h.active = true; h.id = st.nextId++; h.type = T.POWERUP; h.lane = lane; h.lane2 = lane;
+          h.k = typeK(T.POWERUP); h.sigma = sigmaP; h.hs = halfSpan(T.POWERUP); h.w = sz[0]; h.l = sz[1];
+          h.row = st.rowCount; h.color = 0; h.variant = 0; h.power = kind;
+          h.moveStart = h.moveEnd = h.blinkStart = Infinity;
+          h.vis = null; h.hit = false; h.bounced = false; h.nearMissed = true; h.minDx = 99; h.entered = false; h.lateDodge = false;
+          h.fade = 1; h.ry = 0; h.spin = 0; h.bx = 0; h.by = 0; h.bvx = 0; h.bvy = 0;
+          rType[rHead] = T.POWERUP; rLaneMask[rHead] = 1 << lane; rSigma[rHead] = sigmaP;
+          rHead = (rHead + 1) % RECENT; if (rCount < RECENT) rCount++;
+          st.lastPowerSigma = A;
+        }
+      }
+
       st.lastB = B; st.lastG = g; st.rowCount++;
       return row;
     }
@@ -782,6 +841,24 @@ const player = {
   }
   player.group.add(outline, body, lights);
   player.body = body;
+  player.silver = silver;
+  // Full Coverage bubble
+  const bubbleGeo = new THREE.IcosahedronGeometry(1, 1);
+  const bubble = new THREE.Group();
+  bubble.add(new THREE.Mesh(bubbleGeo, new THREE.MeshBasicMaterial({ color: 0x3aa0ff, transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false })));
+  bubble.add(new THREE.Mesh(bubbleGeo, new THREE.MeshBasicMaterial({ color: 0x8fd0ff, wireframe: true, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false })));
+  bubble.scale.set(1.55, 1.15, 3.0);
+  bubble.position.y = 0.8;
+  bubble.visible = false;
+  player.group.add(bubble);
+  player.bubble = bubble;
+  // Fresh Detail glow
+  const shine = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 7.4).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ map: glowTex, color: 0xffd166, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
+  shine.position.y = 0.05;
+  shine.visible = false;
+  player.group.add(shine);
+  player.shine = shine;
   scene.add(player.group);
 }
 function makeGlowTexture() {
@@ -893,6 +970,63 @@ const pools = {
     return { root, body, mat: null, lights: null, blinkL: null, blinkR: null, pool: null };
   }),
 };
+// Power-up tokens
+const POWER = { COVERAGE: 0, BRAKE: 1, DETAIL: 2, CARPOOL: 3 };
+const POWER_INFO = [
+  { name: 'FULL COVERAGE', color: 0x3aa0ff, css: '#3aa0ff', icon: '🛡' },
+  { name: 'BRAKE CHECK', color: 0xff3b3b, css: '#ff4b4b', icon: '⏱' },
+  { name: 'FRESH DETAIL', color: 0xffd166, css: '#ffd166', icon: '✨' },
+  { name: 'CARPOOL 2×', color: 0x2fd27a, css: '#2fd27a', icon: '👥' },
+];
+function starShape(points, ro, ri) {
+  const s = new THREE.Shape();
+  for (let i = 0; i < points * 2; i++) {
+    const a = (i / (points * 2)) * Math.PI * 2 + Math.PI / 2, r = i % 2 ? ri : ro;
+    if (i === 0) s.moveTo(Math.cos(a) * r, Math.sin(a) * r); else s.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+  }
+  s.closePath();
+  return s;
+}
+function extrudeShape(shape, depth) {
+  const g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false });
+  g.translate(0, 0, -depth / 2);
+  return g;
+}
+function buildPowerIcons() {
+  const shield = new THREE.Shape();
+  shield.moveTo(0, 0.62); shield.lineTo(0.5, 0.45); shield.lineTo(0.46, -0.05); shield.lineTo(0, -0.62);
+  shield.lineTo(-0.46, -0.05); shield.lineTo(-0.5, 0.45); shield.closePath();
+  return [
+    merge([part(extrudeShape(shield, 0.2), 0x3aa0ff), part(box(0.14, 0.7, 0.24), 0xffffff, 0, 0.02, 0), part(box(0.6, 0.14, 0.24), 0xffffff, 0, 0.12, 0)]),
+    merge([part(cyl(0.6, 0.6, 0.18, 8), 0xff3b3b, 0, 0, 0, Math.PI / 2, Math.PI / 8, 0), part(box(0.7, 0.18, 0.22), 0xffffff, 0, 0, 0)]),
+    merge([part(extrudeShape(starShape(5, 0.68, 0.3), 0.22), 0xffd166), part(extrudeShape(starShape(4, 0.28, 0.08), 0.26), 0xffffff, 0.55, 0.5, 0)]),
+    merge([
+      part(new THREE.TorusGeometry(0.58, 0.09, 6, 16), 0x2fd27a),
+      part(new THREE.SphereGeometry(0.16, 8, 6), 0xffffff, -0.2, 0.2, 0), part(cyl(0.12, 0.17, 0.36, 8), 0xffffff, -0.2, -0.13, 0),
+      part(new THREE.SphereGeometry(0.16, 8, 6), 0xffffff, 0.2, 0.2, 0), part(cyl(0.12, 0.17, 0.36, 8), 0xffffff, 0.2, -0.13, 0),
+    ]),
+  ];
+}
+const powerIconGeos = buildPowerIcons();
+const powerMat = new THREE.MeshBasicMaterial({ vertexColors: true });
+const glowTexture = makeGlowTexture();
+pools.power = makePool(5, () => {
+  const root = new THREE.Group();
+  const icon = new THREE.Mesh(powerIconGeos[0], powerMat);
+  icon.position.y = 1.3;
+  const haloMat = new THREE.MeshBasicMaterial({ map: glowTexture, color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+  const halo = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 3.2).rotateX(-Math.PI / 2), haloMat);
+  halo.position.y = 0.06;
+  const aura = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 2.2), haloMat);
+  aura.position.y = 1.3;
+  root.add(halo, aura, icon);
+  return {
+    root, body: icon, mat: null, lights: null, blinkL: null, blinkR: null, pool: null, t: 0,
+    setup(h) { icon.geometry = powerIconGeos[h.power]; haloMat.color.setHex(POWER_INFO[h.power].color); this.t = h.id * 0.7; },
+    update(h, dt) { this.t += dt; icon.rotation.y = this.t * 2.4; icon.position.y = 1.3 + Math.sin(this.t * 3) * 0.18; aura.lookAt(camera.position); },
+  };
+});
+
 function poolFor(type) {
   if (type === T.TRUCK) return pools.truck;
   if (type === T.DEBRIS) return pools.debris;
@@ -979,6 +1113,10 @@ const game = {
   tailWarnLane: -9,
   nearMisses: 0,
   milestoneHit: false,
+  shield: false,
+  effect: -1, effectT: 0, effectDur: 1,
+  invulnT: 0,
+  plowed: 0, powerups: 0,
   laneLeftAt: new Float64Array(C.lanes).fill(-99),
 };
 
@@ -993,9 +1131,11 @@ function resetRun() {
   game.spawner = Core.createSpawner(game.seed, C.startLane, START_SIGMA);
   game.sigma = START_SIGMA; game.time = 0; game.score = 0; game.crashT = 0; game.spin = 0; game.slide = 0;
   game.nearMisses = 0; game.milestoneHit = false; game.laneLeftAt.fill(-99);
+  game.shield = false; game.effect = -1; game.effectT = 0; game.invulnT = 0; game.plowed = 0; game.powerups = 0;
   ui.banner.classList.add('hidden');
   player.lane = C.startLane; player.x = player.fromX = laneX(C.startLane); player.t = 1; player.queued = 0; player.bumpT = 0;
   player.group.rotation.set(0, 0, 0);
+  player.group.visible = true;
 }
 
 function startRun() {
@@ -1004,7 +1144,7 @@ function startRun() {
   ui.title.classList.add('hidden');
   ui.over.classList.add('hidden');
   ui.hud.classList.remove('hidden');
-  hudCache.score = hudCache.miles = hudCache.mph = -1; hudCache.past = null;
+  hudCache.score = hudCache.miles = hudCache.mph = -1; hudCache.past = null; hudCache.effect = -2; hudCache.shield = null; hudCache.bar = -1;
 }
 
 function crash(h, hx) {
@@ -1037,6 +1177,7 @@ function gameOver() {
   ui.overSeed.textContent = 'Seed ' + game.seed + ' — replay with ?seed=' + game.seed;
   ui.titleBest.textContent = 'Best: ' + bestScore.toLocaleString();
   ui.tailWarn.classList.add('hidden');
+  ui.slowmoFx.classList.add('hidden'); ui.invulnFx.classList.add('hidden');
   ui.over.classList.remove('hidden');
   game.lastRoast = roast;
 }
@@ -1059,6 +1200,8 @@ window.addEventListener('blur', pause);
 // ---------- UI ----------
 const $ = (id) => document.getElementById(id);
 const ui = {
+  hudShield: $('hudShield'), hudEffect: $('hudEffect'), hudEffectName: $('hudEffectName'), hudEffectIcon: $('hudEffectIcon'),
+  hudEffectBar: $('hudEffectBar'), slowmoFx: $('slowmoFx'), invulnFx: $('invulnFx'),
   hud: $('hud'), title: $('titleScreen'), pause: $('pauseScreen'), over: $('overScreen'),
   overRoast: $('overRoast'), overScore: $('overScore'), overMiles: $('overMiles'), overBest: $('overBest'),
   overNewBest: $('overNewBest'), overTitle: $('overTitle'), banner: $('banner'), bannerSub: $('bannerSub'),
@@ -1069,7 +1212,7 @@ const ui = {
 ui.titleBest.textContent = 'Best: ' + bestScore.toLocaleString();
 if (DEBUG) ui.debug.classList.remove('hidden');
 
-const hudCache = { score: -1, miles: -1, mph: -1, past: null };
+const hudCache = { score: -1, miles: -1, mph: -1, past: null, effect: -2, bar: -1, shield: null, fx: -2 };
 function updateHud() {
   const s = Math.floor(game.score);
   if (s !== hudCache.score) { hudCache.score = s; ui.score.textContent = s.toLocaleString(); }
@@ -1078,8 +1221,25 @@ function updateHud() {
   if (past !== hudCache.past) { hudCache.past = past; ui.milesLabel.textContent = past ? 'PAST GAME NIGHT' : 'TO GAME NIGHT'; }
   const m = Math.floor(Math.abs(C.milestoneMiles - miles) * 100);
   if (m !== hudCache.miles) { hudCache.miles = m; ui.miles.textContent = (m / 100).toFixed(2) + ' mi'; }
-  const mph = Math.round(game.mph);
+  const mph = Math.round(game.mph * worldTimeScale());
   if (mph !== hudCache.mph) { hudCache.mph = mph; ui.speed.textContent = mph; }
+  if (game.shield !== hudCache.shield) { hudCache.shield = game.shield; ui.hudShield.classList.toggle('hidden', !game.shield); }
+  if (game.effect !== hudCache.effect) {
+    hudCache.effect = game.effect;
+    ui.hudEffect.classList.toggle('hidden', game.effect < 0);
+    ui.slowmoFx.classList.toggle('hidden', game.effect !== POWER.BRAKE);
+    ui.invulnFx.classList.toggle('hidden', game.effect !== POWER.DETAIL);
+    if (game.effect >= 0) {
+      const info = POWER_INFO[game.effect];
+      ui.hudEffect.style.setProperty('--pc', info.css);
+      ui.hudEffectName.textContent = info.name;
+      ui.hudEffectIcon.textContent = info.icon;
+    }
+  }
+  if (game.effect >= 0) {
+    const b = Math.ceil((game.effectT / game.effectDur) * 100);
+    if (b !== hudCache.bar) { hudCache.bar = b; ui.hudEffectBar.style.transform = 'scaleX(' + (b / 100) + ')'; }
+  }
 }
 
 // ---------- Input ----------
@@ -1175,6 +1335,7 @@ function updateHazards(dtGame, realDt) {
         if (h.fade <= 0) { releaseHazard(h); continue; }
       } else if (ahead < 0 && ahead > -C.tailgaterWarnMeters && ahead > warnAhead && !h.bounced) { warnAhead = ahead; warnLane = h.lane; }
     } else if (ahead < -C.despawnBehindMeters) { releaseHazard(h); continue; }
+    if (h.bounced && Math.abs(h.bx) > 30) { releaseHazard(h); continue; }
 
     let x = laneX(h.lane), yaw = 0, blinking = false;
     if (h.type === T.CHANGER) {
@@ -1208,9 +1369,14 @@ function updateHazards(dtGame, realDt) {
       if (h.vis.update) h.vis.update(h, realDt);
     }
 
+    if (h.type === T.POWERUP) {
+      if (game.state === 'play' && Math.abs(z) < pHalfL + 1.0 && Math.abs(x - player.x) < pHalfW + 1.0) collectPower(h);
+      continue;
+    }
     if (game.state === 'play' && !h.hit && !h.bounced &&
         Math.abs(z) < pHalfL + h.l * hsc / 2 && Math.abs(x - player.x) < pHalfW + h.w * hsc / 2) {
       onHit(h, x);
+      if (!h.active) continue;
     }
 
     // Near miss: a vehicle passes Pedro with tight side clearance, or right after he left its lane.
@@ -1234,12 +1400,76 @@ function updateHazards(dtGame, realDt) {
   game.tailWarnLane = warnLane;
 }
 
+function bounceAside(h, hx) {
+  const side = hx === player.x ? (Math.random() < 0.5 ? -1 : 1) : Math.sign(hx - player.x);
+  // Knocked along at nearly Pedro's speed (continuous position), then it drifts behind.
+  const ahead = (1 - h.k) * (h.sigma - game.sigma), k2 = 0.85;
+  h.k = k2; h.sigma = game.sigma + ahead / (1 - k2);
+  const heavy = h.type === T.TRUCK;
+  h.bounced = true;
+  h.bvx = side * (heavy ? 7 : 11 + Math.random() * 3);
+  h.bvy = heavy ? 1.5 : 3.5 + Math.random() * 1.5;
+  h.spin = side * (heavy ? 0.8 : 3 + Math.random() * 3);
+}
 function onHit(h, hx) {
+  if (game.effect === POWER.DETAIL) {
+    bounceAside(h, hx);
+    const pts = C.plowPoints * scoreMultiplier();
+    game.score += pts; game.plowed++;
+    floatText('+' + pts + ' PLOWED', '#ffe08a');
+    if (window.__pedroAudio) window.__pedroAudio.thud();
+    return;
+  }
+  if (game.invulnT > 0) { bounceAside(h, hx); return; }
+  if (game.shield) {
+    game.shield = false;
+    game.invulnT = C.shieldGraceSec;
+    bounceAside(h, hx);
+    floatText('COVERED! CLAIM FILED', '#8fd0ff');
+    if (window.__pedroAudio) window.__pedroAudio.thud();
+    return;
+  }
   crash(h, hx);
 }
 
+function collectPower(h) {
+  const kind = h.power;
+  releaseHazard(h);
+  applyPower(kind);
+}
+function applyPower(kind) {
+  game.powerups++;
+  if (kind === POWER.COVERAGE) {
+    if (game.shield) game.score += 100 * scoreMultiplier();
+    game.shield = true;
+  } else {
+    game.effect = kind;
+    game.effectDur = game.effectT = kind === POWER.BRAKE ? C.brakeCheckSec : kind === POWER.DETAIL ? C.freshDetailSec : C.carpoolSec;
+  }
+  floatText(POWER_INFO[kind].name + '!', POWER_INFO[kind].css);
+  if (window.__pedroAudio) window.__pedroAudio.chime();
+}
+
+function worldTimeScale() { return game.effect === POWER.BRAKE ? C.brakeCheckScale : 1; }
+
+function updateEffects(realDt) {
+  if (game.effect >= 0) {
+    game.effectT -= realDt;
+    if (game.effectT <= 0) { game.effect = -1; game.effectT = 0; }
+  }
+  if (game.invulnT > 0) game.invulnT -= realDt;
+  // visuals
+  player.bubble.visible = game.shield;
+  if (game.shield) { player.bubble.rotation.y += realDt * 0.8; }
+  const detail = game.effect === POWER.DETAIL;
+  player.shine.visible = detail;
+  const pulse = detail ? 0.5 + 0.5 * Math.sin(game.time * 14) : 0;
+  player.silver.emissive.setRGB(0.08 + pulse * 0.55, 0.09 + pulse * 0.42, 0.11 + pulse * 0.1);
+  player.group.visible = !(game.invulnT > 0 && game.state === 'play' && Math.floor(game.invulnT * 12) % 2 === 0);
+}
+
 // ---------- Scoring events ----------
-function scoreMultiplier() { return 1; }
+function scoreMultiplier() { return game.effect === POWER.CARPOOL ? C.carpoolMultiplier : 1; }
 const _proj = new THREE.Vector3();
 let floaterIdx = 0;
 function floatText(text, color) {
@@ -1341,7 +1571,7 @@ function update(realDt) {
   const miles = game.sigma / Core.METERS_PER_MILE;
   if (game.state === 'play' || game.state === 'crashing') {
     const crashing = game.state === 'crashing';
-    const dtGame = crashing ? realDt * C.crashSlowmo : realDt;
+    const dtGame = realDt * (crashing ? C.crashSlowmo : worldTimeScale());
     game.mph = Core.speedMph(miles);
     let v = game.mph * Core.MPH_TO_MPS;
     if (crashing) v *= Math.max(0, 1 - game.crashT / 0.5);
@@ -1361,6 +1591,7 @@ function update(realDt) {
       player.group.position.x = player.x;
     }
     updateHazards(dtGame, realDt);
+    if (!crashing) updateEffects(realDt);
     if (crashing) { game.crashT += realDt; if (game.crashT >= C.crashSec) gameOver(); }
     updateHud();
     updateTailWarn();
@@ -1398,18 +1629,22 @@ window.__pedro = {
   snapshot() {
     let live = 0;
     if (game.spawner) for (const h of game.spawner.hazards) if (h.active) live++;
-    return { state: game.state, lane: player.lane, x: player.x, tweening: player.t < 1, mph: game.mph,
+    return { state: game.state, lane: player.lane, x: player.x, tweening: player.t < 1, mph: game.mph * worldTimeScale(),
       miles: game.sigma / Core.METERS_PER_MILE, score: game.score, seed: game.seed, liveHazards: live,
       rows: game.spawner ? game.spawner.rowCount : 0, roast: game.lastRoast || '',
-      nearMisses: game.nearMisses, milestoneHit: game.milestoneHit };
+      nearMisses: game.nearMisses, milestoneHit: game.milestoneHit,
+      shield: game.shield, effect: game.effect, effectT: game.effectT, powerups: game.powerups, plowed: game.plowed };
   },
   // Upcoming rows on the distance axis (used by the test autopilot in tools/smoke.mjs)
   corridor() {
     const out = { sigma: game.sigma, v: game.mph * Core.MPH_TO_MPS, lane: player.lane, tweening: player.t < 1, state: game.state, rows: [] };
-    if (game.spawner) for (const r of game.spawner.rows) if (r.index >= 0 && r.B >= game.sigma) out.rows.push({ i: r.index, A: r.A, B: r.B, g: r.g });
+    if (game.spawner) for (const r of game.spawner.rows) if (r.index >= 0 && r.B >= game.sigma) out.rows.push({ i: r.index, A: r.A, B: r.B, g: r.g, mask: r.mask });
     out.rows.sort((a, b) => a.i - b.i);
     return out;
   },
+  // ?debug only: grant a power-up (0 Full Coverage, 1 Brake Check, 2 Fresh Detail, 3 Carpool)
+  grant(kind) { if (DEBUG && game.state === 'play') applyPower(kind); },
+  hudText() { return document.getElementById('hudPower').innerText.replace(/\s+/g, ' ').trim(); },
   renderProbe() {
     renderer.render(scene, camera);
     const gl = renderer.getContext();

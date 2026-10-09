@@ -190,18 +190,82 @@ async function autopilot(label, query, seconds, expect) {
   }
   await p2.screenshot({ path: path.join(outDir, `5-autopilot-${label}.png`) });
   st.state === 'play'
-    ? ok(`autopilot ${label}: no crash over ${((Date.now() - t0) / 1000).toFixed(0)} s, ${st.miles.toFixed(2)} mi, ${st.mph.toFixed(0)} mph, ${st.nearMisses} close calls`)
+    ? ok(`autopilot ${label}: no crash over ${((Date.now() - t0) / 1000).toFixed(0)} s, ${st.miles.toFixed(2)} mi, ${st.mph.toFixed(0)} mph, ${st.nearMisses} close calls, ${st.powerups} power-ups`)
     : fail(`autopilot ${label}: crashed at ${st.miles.toFixed(2)} mi (seed ${st.seed})`);
   if (expect) expect(st);
   if (errs.length) fail(`autopilot ${label} console errors: ` + errs.join(' | '));
   await p2.close();
   return st;
 }
-await autopilot('milestone', '?debug&seed=777&start=2.75', 25, (st) => {
+const QUICK = process.argv.includes('--quick');   // skip the long autopilot runs
+if (!QUICK) await autopilot('milestone', '?debug&seed=777&start=2.75', 25, (st) => {
   st.milestoneHit ? ok('passed 3 mi: "PEDRO MADE IT TO GAME NIGHT!" banner fired') : fail('milestone not reached');
   st.nearMisses > 0 ? ok(`near-miss bonus awarded (${st.nearMisses})`) : fail('no near misses recorded');
 });
-await autopilot('brutal', '?debug&seed=4242&start=8', 30);
+if (!QUICK) await autopilot('brutal', '?debug&seed=4242&start=8', 30);
+
+// --- Power-ups ---
+{
+  const p3 = await context.newPage();
+  const errs = [];
+  p3.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
+  p3.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
+  await p3.goto(pathToFileURL(path.join(root, 'index.html')).href + '?debug&seed=99&start=1');
+  await p3.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  await p3.keyboard.press('Enter');
+  await sleep(300);
+  const sn = () => p3.evaluate(() => window.__pedro.snapshot());
+  const hud = () => p3.evaluate(() => window.__pedro.hudText());
+  // Brake Check: world slows, timer counts down, HUD shows it
+  let a = await sn();
+  await p3.evaluate(() => window.__pedro.grant(1));
+  await sleep(200);
+  let b = await sn();
+  b.effect === 1 && /BRAKE CHECK/.test(await hud()) ? ok('Brake Check active + HUD timer shown') : fail('brake check not active: ' + JSON.stringify(b));
+  b.mph < a.mph * 0.6 ? ok(`Brake Check slows the world (${a.mph.toFixed(0)} -> ${b.mph.toFixed(0)} effective mph)`) : fail(`no slow-mo: ${a.mph} -> ${b.mph}`);
+  // Only one timed effect: Carpool replaces Brake Check
+  await p3.evaluate(() => window.__pedro.grant(3));
+  await sleep(500);
+  b = await sn();
+  b.effect === 3 && /CARPOOL/.test(await hud()) && !/BRAKE/.test(await hud()) ? ok('Carpool replaces Brake Check (one timed effect at a time)') : fail('effect replacement broken: ' + (await hud()));
+  // Kamikaze pilot: steer INTO a blocked lane of the next row (real key events)
+  await p3.evaluate(() => {
+    const key = (k) => window.dispatchEvent(new KeyboardEvent('keydown', { key: k }));
+    window.__kamikaze = true;
+    (function tick() {
+      if (!window.__kamikaze) return;
+      requestAnimationFrame(tick);
+      const c = window.__pedro.corridor();
+      if (c.state !== 'play' || c.tweening) return;
+      const row = c.rows.find((r) => r.mask && r.B > c.sigma);
+      if (!row || (row.mask & (1 << c.lane))) return;
+      let best = -1;
+      for (let l = 0; l < 4; l++) if ((row.mask & (1 << l)) && (best < 0 || Math.abs(l - c.lane) < Math.abs(best - c.lane))) best = l;
+      if (best >= 0) key(best > c.lane ? 'ArrowRight' : 'ArrowLeft');
+    })();
+  });
+  // Fresh Detail: plow through traffic for its duration without crashing
+  await p3.evaluate(() => window.__pedro.grant(2));
+  let t0 = Date.now(), c;
+  while (Date.now() - t0 < 40000) { c = await sn(); if (c.state !== 'play' || c.effect !== 2 || (c.plowed > 0 && c.effectT < 1.2)) break; await sleep(150); if (c.plowed > 0 && !globalThis.__shot) { globalThis.__shot = 1; await p3.screenshot({ path: path.join(outDir, '6-fresh-detail.png') }); } }
+  c.state === 'play' && c.plowed > 0 ? ok(`Fresh Detail: plowed ${c.plowed} hazards aside while steering into traffic, no crash`) : fail(`Fresh Detail: state ${c.state}, plowed ${c.plowed}`);
+  // Full Coverage: absorb exactly one crash
+  await p3.evaluate(() => window.__pedro.grant(0));
+  await sleep(100);
+  c = await sn();
+  c.shield && /FULL COVERAGE/.test(await hud()) ? ok('Full Coverage shield up + HUD badge') : fail('no shield');
+  await p3.screenshot({ path: path.join(outDir, '7-coverage.png') });
+  t0 = Date.now();
+  while (Date.now() - t0 < 60000) { c = await sn(); if (!c.shield || c.state !== 'play') break; await sleep(100); }
+  !c.shield && c.state === 'play' ? ok('Full Coverage absorbed a crash, run continues') : fail('shield did not absorb: ' + JSON.stringify(c));
+  t0 = Date.now();
+  while (Date.now() - t0 < 60000) { c = await sn(); if (c.state !== 'play') break; await sleep(100); }
+  c.state !== 'play' ? ok('next hit after the shield is spent ends the run') : fail('second hit did not crash');
+  await p3.evaluate(() => { window.__kamikaze = false; });
+  // Natural pickups happen in normal play (the autopilot drives the guaranteed lane where most spawn)
+  if (errs.length) fail('power-up page console errors: ' + errs.join(' | ')); else ok('power-up page: no console errors');
+  await p3.close();
+}
 
 // --- Extra checks registered by later increments ---
 const extra = await page.evaluate(() => (window.__pedro.selfTest ? window.__pedro.selfTest() : []));
