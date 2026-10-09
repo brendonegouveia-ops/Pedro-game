@@ -71,6 +71,35 @@
   }
   @keyframes blink { 50% { opacity: 0.55; } }
 
+  .floater {
+    position: fixed; left: 0; top: 0; font-weight: 900; font-size: 22px; color: #ffd166; white-space: nowrap;
+    text-shadow: 0 2px 0 #7a3b00, 0 0 12px rgba(255,180,60,0.7); opacity: 0; pointer-events: none;
+  }
+  .floater.go { animation: floatUp 0.95s ease-out forwards; }
+  @keyframes floatUp {
+    0% { opacity: 0; transform: translate(-50%, 10px) scale(0.7); }
+    15% { opacity: 1; transform: translate(-50%, 0) scale(1.15); }
+    100% { opacity: 0; transform: translate(-50%, -80px) scale(1); }
+  }
+  #banner {
+    position: fixed; left: 50%; top: 24%; transform: translate(-50%, 0); text-align: center; width: min(92vw, 520px);
+    padding: 14px 10px; border-radius: 18px; background: linear-gradient(135deg, #ffcf3f, #ff7a59 55%, #d6336c);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.45), 0 0 0 4px rgba(255,255,255,0.85) inset;
+    font-weight: 900; text-transform: uppercase; line-height: 1; color: #fff; text-shadow: 0 3px 0 rgba(90,20,40,0.6);
+    animation: bannerIn 0.6s cubic-bezier(.2,1.6,.4,1) both;
+  }
+  #banner .b1 { font-size: clamp(26px, 8vw, 46px); }
+  #banner .b2 { font-size: clamp(30px, 9.5vw, 54px); color: #fff6c8; }
+  #banner small { display: block; margin-top: 8px; font-size: 13px; letter-spacing: 0.08em; opacity: 0.95; text-transform: none; }
+  @keyframes bannerIn { from { opacity: 0; transform: translate(-50%, -30px) scale(0.6); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
+  #confetti { position: fixed; inset: 0; overflow: hidden; pointer-events: none; }
+  #confetti i { position: absolute; top: -20px; width: 9px; height: 14px; opacity: 0; border-radius: 2px; }
+  #confetti.go i { animation: fall 2.8s linear forwards; }
+  @keyframes fall {
+    0% { opacity: 1; transform: translate3d(0, 0, 0) rotate(0deg); }
+    100% { opacity: 0.9; transform: translate3d(var(--dx), 110vh, 0) rotate(720deg); }
+  }
+
   #debugPanel {
     position: fixed; left: 8px; bottom: calc(env(safe-area-inset-bottom) + 8px);
     background: rgba(0,0,0,0.65); color: #7CFF9B; font: 11px/1.35 ui-monospace, Menlo, monospace;
@@ -105,7 +134,7 @@
 </div>
 
 <div id="overScreen" class="layer screen hidden">
-  <div class="overTitle">Wrecked</div>
+  <div class="overTitle" id="overTitle">Wrecked</div>
   <p class="roast" id="overRoast"></p>
   <div class="newBest hidden" id="overNewBest">NEW BEST!</div>
   <div class="stats">
@@ -116,6 +145,10 @@
   <div class="cta">Tap / Space to drive again</div>
   <div class="seedline" id="overSeed"></div>
 </div>
+
+<div id="floaters"><div class="floater"></div><div class="floater"></div><div class="floater"></div><div class="floater"></div><div class="floater"></div></div>
+<div id="confetti"></div>
+<div id="banner" class="hidden"><div class="b1">Pedro made it</div><div class="b2">to game night!</div><small id="bannerSub">+1,000 · keep driving for score</small></div>
 
 <div id="tailWarn" class="hidden">⚠ TAILGATER <span id="tailWarnDir"></span></div>
 
@@ -199,6 +232,14 @@ const CONFIG = {
   // --- Fairness invariant ---
   reactionSec: 0.25,           // margin added to every lane change when validating a row
   maxRowAttempts: 8,           // regenerate a failing row this many times, then fall back to an empty row
+
+  // --- Scoring ---
+  pointsPerMeter: 1,           // base points per meter, multiplied by (current mph / startSpeedMph)
+  nearMissPoints: 50,          // "+50 CLOSE CALL"
+  nearMissMargin: 0.6,         // visual side clearance (meters) that counts as a close call
+  lateDodgeSec: 0.3,           // leaving a car's lane this soon before it reaches Pedro also counts
+  milestoneBonus: 1000,        // awarded on reaching milestoneMiles
+  bannerSec: 4,                // how long the game-night banner stays up
 
   // --- Crash ---
   crashSlowmo: 0.25,           // time scale during the crash
@@ -319,14 +360,14 @@ const PedroCore = (() => {
   // Rows never overlap in sigma and every hazard (incl. lane-changers on both lanes and
   // tailgaters) lies inside its row's span, so (1)+(2) chain into a survivable path.
   // A row that fails is regenerated; after maxRowAttempts it becomes an empty row.
-  function createSpawner(seed, startLane) {
+  function createSpawner(seed, startLane, startSigma) {
     const rng = mulberry32(seed);
     const POOL = 192, ROWS = 48, RECENT = 96;
     const hazards = [];
     for (let i = 0; i < POOL; i++) hazards.push({
       active: false, id: 0, type: 0, lane: 0, lane2: 0, k: 0, sigma: 0, hs: 0, w: 0, l: 0, row: 0, color: 0, variant: 0,
       moveStart: 0, moveEnd: 0, blinkStart: 0, power: 0,
-      vis: null, hit: false, bounced: false, nearMissed: false, minDx: 99, bx: 0, by: 0, bz: 0, bvx: 0, bvy: 0, bvz: 0, spin: 0, ry: 0, fade: 1,
+      vis: null, hit: false, bounced: false, nearMissed: false, minDx: 99, entered: false, lateDodge: false, bx: 0, by: 0, bz: 0, bvx: 0, bvy: 0, bvz: 0, spin: 0, ry: 0, fade: 1,
     });
     const rows = [];
     for (let i = 0; i < ROWS; i++) rows.push({ index: -1, A: 0, B: 0, g: 0, gPrev: 0, budget: 0, count: 0, fallback: false });
@@ -341,7 +382,7 @@ const PedroCore = (() => {
     const openLanes = new Int8Array(CONFIG.lanes);
 
     const st = {
-      seed, rng, hazards, rows, rowCount: 0, lastB: CONFIG.startClearMeters, lastG: startLane,
+      seed, rng, hazards, rows, rowCount: 0, lastB: (startSigma || 0) + CONFIG.startClearMeters, lastG: startLane,
       fallbacks: 0, retries: 0, nextId: 1,
       horizon: CONFIG.spawnAheadMeters / (1 - CONFIG.trafficSpeedFrac),
     };
@@ -455,7 +496,7 @@ const PedroCore = (() => {
         h.moveEnd = h.sigma - CONFIG.changerLeadSec * vh;
         h.moveStart = h.moveEnd - CONFIG.changerMoveSec * vh;
         h.blinkStart = h.moveStart - CONFIG.blinkerSec * vh;
-        h.vis = null; h.hit = false; h.bounced = false; h.nearMissed = false; h.minDx = 99; h.fade = 1; h.ry = 0; h.spin = 0;
+        h.vis = null; h.hit = false; h.bounced = false; h.nearMissed = false; h.minDx = 99; h.entered = false; h.lateDodge = false; h.fade = 1; h.ry = 0; h.spin = 0;
         h.bx = 0; h.by = 0; h.bvx = 0; h.bvy = 0;
         rType[rHead] = type; rLaneMask[rHead] = (1 << h.lane) | (1 << h.lane2); rSigma[rHead] = h.sigma;
         rHead = (rHead + 1) % RECENT; if (rCount < RECENT) rCount++;
@@ -885,6 +926,7 @@ function startLaneChange(dir) {
   const target = player.lane + dir;
   if (target < 0 || target >= C.lanes) { player.bump = dir; player.bumpT = 0.16; return; }
   player.fromX = player.x;
+  game.laneLeftAt[player.lane] = game.time;
   player.lane = target;
   player.dir = dir;
   player.t = 0;
@@ -916,6 +958,12 @@ const URL_SEED = (() => {
   return Number.isFinite(n) ? n >>> 0 : null;
 })();
 
+// ?debug&start=2.5 begins runs at mile 2.5 (testing aid)
+const START_SIGMA = (() => {
+  const v = parseFloat(new URLSearchParams(location.search).get('start'));
+  return DEBUG && Number.isFinite(v) && v > 0 ? v * Core.METERS_PER_MILE : 0;
+})();
+
 const game = {
   state: 'title',        // title | play | crashing | over | paused
   prevState: 'title',
@@ -929,6 +977,9 @@ const game = {
   overAt: 0,
   spin: 0, slide: 0,
   tailWarnLane: -9,
+  nearMisses: 0,
+  milestoneHit: false,
+  laneLeftAt: new Float64Array(C.lanes).fill(-99),
 };
 
 function releaseAllHazards() {
@@ -939,8 +990,10 @@ function releaseAllHazards() {
 function resetRun() {
   releaseAllHazards();
   game.seed = URL_SEED !== null ? URL_SEED : (Math.random() * 4294967296) >>> 0;
-  game.spawner = Core.createSpawner(game.seed, C.startLane);
-  game.sigma = 0; game.time = 0; game.score = 0; game.crashT = 0; game.spin = 0; game.slide = 0;
+  game.spawner = Core.createSpawner(game.seed, C.startLane, START_SIGMA);
+  game.sigma = START_SIGMA; game.time = 0; game.score = 0; game.crashT = 0; game.spin = 0; game.slide = 0;
+  game.nearMisses = 0; game.milestoneHit = false; game.laneLeftAt.fill(-99);
+  ui.banner.classList.add('hidden');
   player.lane = C.startLane; player.x = player.fromX = laneX(C.startLane); player.t = 1; player.queued = 0; player.bumpT = 0;
   player.group.rotation.set(0, 0, 0);
 }
@@ -979,6 +1032,8 @@ function gameOver() {
   ui.overMiles.textContent = miles.toFixed(2) + ' mi';
   ui.overBest.textContent = bestScore.toLocaleString();
   ui.overNewBest.classList.toggle('hidden', !isBest);
+  ui.overTitle.textContent = game.milestoneHit ? 'Made it… then wrecked' : 'Wrecked';
+  ui.banner.classList.add('hidden');
   ui.overSeed.textContent = 'Seed ' + game.seed + ' — replay with ?seed=' + game.seed;
   ui.titleBest.textContent = 'Best: ' + bestScore.toLocaleString();
   ui.tailWarn.classList.add('hidden');
@@ -1006,7 +1061,8 @@ const $ = (id) => document.getElementById(id);
 const ui = {
   hud: $('hud'), title: $('titleScreen'), pause: $('pauseScreen'), over: $('overScreen'),
   overRoast: $('overRoast'), overScore: $('overScore'), overMiles: $('overMiles'), overBest: $('overBest'),
-  overNewBest: $('overNewBest'), overSeed: $('overSeed'), tailWarn: $('tailWarn'), tailWarnDir: $('tailWarnDir'),
+  overNewBest: $('overNewBest'), overTitle: $('overTitle'), banner: $('banner'), bannerSub: $('bannerSub'),
+  confetti: $('confetti'), floaters: Array.from(document.querySelectorAll('.floater')), overSeed: $('overSeed'), tailWarn: $('tailWarn'), tailWarnDir: $('tailWarnDir'),
   score: $('hudScoreVal'), miles: $('hudMilesVal'), milesLabel: $('hudMilesLabel'), speed: $('hudSpeedVal'),
   titleBest: $('titleBest'), debug: $('debugPanel'),
 };
@@ -1156,12 +1212,74 @@ function updateHazards(dtGame, realDt) {
         Math.abs(z) < pHalfL + h.l * hsc / 2 && Math.abs(x - player.x) < pHalfW + h.w * hsc / 2) {
       onHit(h, x);
     }
+
+    // Near miss: a vehicle passes Pedro with tight side clearance, or right after he left its lane.
+    if (game.state === 'play' && !h.hit && !h.bounced && !h.nearMissed && h.type !== T.DEBRIS && h.type !== T.POWERUP) {
+      const reach = C.playerSize[1] / 2 + h.l / 2;
+      if (Math.abs(z) < reach + 1) {
+        const clear = Math.abs(x - player.x) - (C.playerSize[0] + h.w) / 2;
+        if (clear < h.minDx) h.minDx = clear;
+        if (!h.entered) {
+          h.entered = true;
+          const occ = Math.abs(x - laneX(h.lane2)) < Math.abs(x - laneX(h.lane)) ? h.lane2 : h.lane;
+          if (occ !== player.lane && game.time - game.laneLeftAt[occ] < C.lateDodgeSec) h.lateDodge = true;
+        }
+      }
+      if (h.k < 1 ? ahead < -reach : ahead > reach) {
+        h.nearMissed = true;
+        if (h.minDx < C.nearMissMargin || h.lateDodge) awardNearMiss();
+      }
+    }
   }
   game.tailWarnLane = warnLane;
 }
 
 function onHit(h, hx) {
   crash(h, hx);
+}
+
+// ---------- Scoring events ----------
+function scoreMultiplier() { return 1; }
+const _proj = new THREE.Vector3();
+let floaterIdx = 0;
+function floatText(text, color) {
+  const el = ui.floaters[floaterIdx];
+  floaterIdx = (floaterIdx + 1) % ui.floaters.length;
+  _proj.set(player.x, 2.2, 0).project(camera);
+  el.style.left = ((_proj.x + 1) / 2 * window.innerWidth) + 'px';
+  el.style.top = ((1 - _proj.y) / 2 * window.innerHeight - 30) + 'px';
+  el.style.color = color || '';
+  el.textContent = text;
+  el.classList.remove('go');
+  void el.offsetWidth;            // restart the CSS animation
+  el.classList.add('go');
+}
+function awardNearMiss() {
+  const pts = C.nearMissPoints * scoreMultiplier();
+  game.score += pts;
+  game.nearMisses++;
+  floatText('+' + pts + ' CLOSE CALL');
+  if (window.__pedroAudio) window.__pedroAudio.whoosh();
+}
+// Confetti pieces (created once)
+for (let i = 0; i < 36; i++) {
+  const c = document.createElement('i');
+  c.style.left = (Math.random() * 100) + '%';
+  c.style.background = ['#ffd166', '#ef476f', '#06d6a0', '#118ab2', '#ffffff', '#ff9f1c'][i % 6];
+  c.style.animationDelay = (Math.random() * 0.6) + 's';
+  c.style.setProperty('--dx', ((Math.random() - 0.5) * 160) + 'px');
+  ui.confetti.appendChild(c);
+}
+let bannerTimer = 0;
+function hitMilestone() {
+  game.milestoneHit = true;
+  game.score += C.milestoneBonus * scoreMultiplier();
+  ui.bannerSub.textContent = '+' + (C.milestoneBonus * scoreMultiplier()).toLocaleString() + ' · keep driving for score';
+  ui.banner.classList.remove('hidden');
+  ui.confetti.classList.remove('go'); void ui.confetti.offsetWidth; ui.confetti.classList.add('go');
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => { ui.banner.classList.add('hidden'); ui.confetti.classList.remove('go'); }, C.bannerSec * 1000);
+  if (window.__pedroAudio) window.__pedroAudio.fanfare();
 }
 
 let tailText = null;
@@ -1233,7 +1351,8 @@ function update(realDt) {
     scrollRoad(d);
     if (!crashing) {
       game.spawner.ensure(game.sigma);
-      game.score += d * (game.mph / C.startSpeedMph);
+      game.score += d * C.pointsPerMeter * (game.mph / C.startSpeedMph) * scoreMultiplier();
+      if (!game.milestoneHit && game.sigma >= C.milestoneMiles * Core.METERS_PER_MILE) hitMilestone();
       updatePlayer(realDt);
     } else {
       player.group.rotation.y += game.spin * dtGame * 2.2;
@@ -1281,7 +1400,15 @@ window.__pedro = {
     if (game.spawner) for (const h of game.spawner.hazards) if (h.active) live++;
     return { state: game.state, lane: player.lane, x: player.x, tweening: player.t < 1, mph: game.mph,
       miles: game.sigma / Core.METERS_PER_MILE, score: game.score, seed: game.seed, liveHazards: live,
-      rows: game.spawner ? game.spawner.rowCount : 0, roast: game.lastRoast || '' };
+      rows: game.spawner ? game.spawner.rowCount : 0, roast: game.lastRoast || '',
+      nearMisses: game.nearMisses, milestoneHit: game.milestoneHit };
+  },
+  // Upcoming rows on the distance axis (used by the test autopilot in tools/smoke.mjs)
+  corridor() {
+    const out = { sigma: game.sigma, v: game.mph * Core.MPH_TO_MPS, lane: player.lane, tweening: player.t < 1, state: game.state, rows: [] };
+    if (game.spawner) for (const r of game.spawner.rows) if (r.index >= 0 && r.B >= game.sigma) out.rows.push({ i: r.index, A: r.A, B: r.B, g: r.g });
+    out.rows.sort((a, b) => a.i - b.i);
+    return out;
   },
   renderProbe() {
     renderer.render(scene, camera);

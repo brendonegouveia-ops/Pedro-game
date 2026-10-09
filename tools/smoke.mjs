@@ -38,7 +38,7 @@ const page = await context.newPage();
 const consoleErrors = [];
 page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
 page.on('pageerror', (err) => consoleErrors.push('pageerror: ' + err.message));
-await page.route(cdnUrl, (route) => route.fulfill({
+await context.route(cdnUrl, (route) => route.fulfill({
   status: 200, body: localThree,
   headers: { 'Content-Type': 'application/javascript', 'Access-Control-Allow-Origin': '*' },
 }));
@@ -142,12 +142,6 @@ s.mph > 70 && s.miles > 0 ? ok(`speed rising: ${s.mph.toFixed(1)} mph at ${s.mil
   s.state === 'play' && s.miles < 0.05 && s.seed === 12345 ? ok('Space restarts instantly with the same ?seed') : fail('restart failed: ' + JSON.stringify(s));
 }
 
-// --- Extra checks registered by later increments ---
-const extra = await page.evaluate(() => (window.__pedro.selfTest ? window.__pedro.selfTest() : []));
-for (const r of extra) (r.pass ? ok : fail)(r.name + (r.detail ? ' — ' + r.detail : ''));
-
-await page.screenshot({ path: path.join(outDir, '2-play.png') });
-
 // --- Auto-pause on visibilitychange ---
 await page.evaluate(() => {
   Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
@@ -155,6 +149,66 @@ await page.evaluate(() => {
 });
 s = await snap();
 s.state === 'paused' ? ok('auto-pauses on visibilitychange') : fail('did not pause: ' + s.state);
+await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => false }); });
+await page.keyboard.press('Enter'); await sleep(100);
+s = await snap();
+s.state === 'play' ? ok('any key resumes from pause') : fail('did not resume: ' + s.state);
+
+// --- Autopilot: follow the guaranteed-open lane via real key events, dodging as late as safely possible.
+// If the fairness invariant holds in real-time play, this bot never crashes.
+async function autopilot(label, query, seconds, expect) {
+  const p2 = await context.newPage();
+  const errs = [];
+  p2.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
+  p2.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
+  await p2.goto(pathToFileURL(path.join(root, 'index.html')).href + query);
+  await p2.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  await p2.keyboard.press('Enter');
+  await p2.evaluate(() => {
+    const key = (k) => window.dispatchEvent(new KeyboardEvent('keydown', { key: k }));
+    const LC = 0.15, MARGIN = 0.12;
+    function tick() {
+      const c = window.__pedro.corridor();
+      if (c.state !== 'play') return;
+      requestAnimationFrame(tick);
+      if (c.tweening || !c.rows.length) return;
+      // the row we are inside (or the next one, once the current one is behind us)
+      const row = c.rows[0];
+      if (c.lane === row.g) return;
+      const n = Math.abs(row.g - c.lane);
+      const late = c.sigma >= row.A - c.v * (n * LC + MARGIN);
+      if (late || c.sigma >= row.A) key(row.g > c.lane ? 'ArrowRight' : 'ArrowLeft');
+    }
+    requestAnimationFrame(tick);
+  });
+  const t0 = Date.now();
+  let st;
+  while (Date.now() - t0 < seconds * 1000) {
+    st = await p2.evaluate(() => window.__pedro.snapshot());
+    if (st.state !== 'play') break;
+    await sleep(500);
+  }
+  await p2.screenshot({ path: path.join(outDir, `5-autopilot-${label}.png`) });
+  st.state === 'play'
+    ? ok(`autopilot ${label}: no crash over ${((Date.now() - t0) / 1000).toFixed(0)} s, ${st.miles.toFixed(2)} mi, ${st.mph.toFixed(0)} mph, ${st.nearMisses} close calls`)
+    : fail(`autopilot ${label}: crashed at ${st.miles.toFixed(2)} mi (seed ${st.seed})`);
+  if (expect) expect(st);
+  if (errs.length) fail(`autopilot ${label} console errors: ` + errs.join(' | '));
+  await p2.close();
+  return st;
+}
+await autopilot('milestone', '?debug&seed=777&start=2.75', 25, (st) => {
+  st.milestoneHit ? ok('passed 3 mi: "PEDRO MADE IT TO GAME NIGHT!" banner fired') : fail('milestone not reached');
+  st.nearMisses > 0 ? ok(`near-miss bonus awarded (${st.nearMisses})`) : fail('no near misses recorded');
+});
+await autopilot('brutal', '?debug&seed=4242&start=8', 30);
+
+// --- Extra checks registered by later increments ---
+const extra = await page.evaluate(() => (window.__pedro.selfTest ? window.__pedro.selfTest() : []));
+for (const r of extra) (r.pass ? ok : fail)(r.name + (r.detail ? ' — ' + r.detail : ''));
+
+await page.screenshot({ path: path.join(outDir, '2-play.png') });
+
 
 if (consoleErrors.length) fail('console errors:\n    ' + consoleErrors.join('\n    '));
 else ok('no console errors');
