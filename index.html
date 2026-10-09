@@ -111,6 +111,32 @@
     100% { opacity: 0.9; transform: translate3d(var(--dx), 110vh, 0) rotate(720deg); }
   }
 
+  .iconBtn {
+    position: fixed; bottom: calc(env(safe-area-inset-bottom) + 14px); width: 46px; height: 46px; border-radius: 50%;
+    background: rgba(10,12,22,0.6); border: 2px solid rgba(255,255,255,0.35); color: #fff; padding: 0;
+    display: grid; place-items: center; cursor: pointer; z-index: 20; -webkit-tap-highlight-color: transparent;
+  }
+  .iconBtn svg { width: 22px; height: 22px; }
+  #muteBtn { right: 14px; }
+  #pauseBtn { right: 70px; }
+  #muteBtn .off { display: none; }
+  #muteBtn.muted .on { display: none; }
+  #muteBtn.muted .off { display: block; }
+  .btnRow { display: flex; gap: 10px; margin-bottom: 14px; pointer-events: auto; }
+  .shareBtn {
+    font: inherit; font-size: 17px; font-weight: 900; letter-spacing: 0.04em; color: #1a1030; cursor: pointer;
+    background: linear-gradient(135deg, #ffd166, #ff9f43); border: 0; border-radius: 999px; padding: 12px 26px;
+    box-shadow: 0 6px 20px rgba(255,160,60,0.4); pointer-events: auto;
+  }
+  .shareBtn:active { transform: scale(0.96); }
+  #toast {
+    position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 80px); transform: translateX(-50%);
+    background: rgba(20,24,40,0.95); border: 1px solid rgba(255,255,255,0.25); padding: 10px 16px; border-radius: 12px;
+    font-weight: 700; font-size: 14px; max-width: 86vw; text-align: center; z-index: 30; pointer-events: none;
+  }
+  .hint { margin-top: 16px; font-size: 13px; opacity: 0.7; line-height: 1.5; }
+  .screen { overflow-y: auto; }
+
   #debugPanel {
     position: fixed; left: 8px; bottom: calc(env(safe-area-inset-bottom) + 8px);
     background: rgba(0,0,0,0.65); color: #7CFF9B; font: 11px/1.35 ui-monospace, Menlo, monospace;
@@ -143,6 +169,7 @@
   <p class="sub">Brand-new silver Jetta. Same driver. Get him there in one piece this time.</p>
   <div class="cta">Tap / press any key to drive</div>
   <div class="best" id="titleBest">Best: 0</div>
+  <div class="hint">Swipe or tap left / right to change lanes<br>Keyboard: ← → or A / D · P pause · M mute</div>
 </div>
 
 <div id="pauseScreen" class="layer screen hidden">
@@ -159,6 +186,7 @@
     <div class="stat"><small>DISTANCE</small><b id="overMiles">0.00 mi</b></div>
     <div class="stat"><small>BEST</small><b id="overBest">0</b></div>
   </div>
+  <div class="btnRow"><button class="shareBtn" id="shareBtn" type="button">Share</button></div>
   <div class="cta">Tap / Space to drive again</div>
   <div class="seedline" id="overSeed"></div>
 </div>
@@ -168,6 +196,15 @@
 <div id="banner" class="hidden"><div class="b1">Pedro made it</div><div class="b2">to game night!</div><small id="bannerSub">+1,000 · keep driving for score</small></div>
 
 <div id="tailWarn" class="hidden">⚠ TAILGATER <span id="tailWarnDir"></span></div>
+
+<button id="pauseBtn" class="iconBtn hidden" type="button" aria-label="Pause">
+  <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+</button>
+<button id="muteBtn" class="iconBtn" type="button" aria-label="Mute">
+  <svg class="on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8.5 8.5 0 0 1 0 12"/></svg>
+  <svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M17 9l5 6M22 9l-5 6"/></svg>
+</button>
+<div id="toast" class="hidden"></div>
 
 <div id="debugPanel" class="hidden"></div>
 
@@ -275,6 +312,10 @@ const CONFIG = {
   crashSlowmo: 0.25,           // time scale during the crash
   crashSec: 1.3,               // real seconds of slow-mo spin-out before the game-over screen
   restartLockSec: 0.6,         // ignore input this long after game over appears
+
+  // --- Sharing / audio ---
+  shareUrl: 'https://brendonegouveia-ops.github.io/pedro-game/',
+  masterVolume: 0.7,
 };
 
 // Game-over roast lines. {miles} and {score} are substituted.
@@ -1084,6 +1125,169 @@ function updatePlayer(realDt) {
   player.group.rotation.set(0, yaw, roll);
 }
 
+// ---------- Audio: WebAudio synthesis only (unlocked by the first tap/key, iOS requirement) ----------
+const Sfx = (() => {
+  let ctx = null, master = null, eng = null, noise = null;
+  let muted = store.get('pedro.muted', '0') === '1';
+  function init() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    ctx = new AC();
+    master = ctx.createGain();
+    master.gain.value = muted ? 0 : C.masterVolume;
+    master.connect(ctx.destination);
+    // Engine hum: detuned saw + sub square through a resonant low-pass, with a rumble LFO
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 500; f.Q.value = 4;
+    const g = ctx.createGain(); g.gain.value = 0;
+    const o1 = ctx.createOscillator(); o1.type = 'sawtooth'; o1.frequency.value = 50;
+    const o2 = ctx.createOscillator(); o2.type = 'square'; o2.frequency.value = 25;
+    const o2g = ctx.createGain(); o2g.gain.value = 0.45;
+    const lfo = ctx.createOscillator(); lfo.frequency.value = 17;
+    const lfoG = ctx.createGain(); lfoG.gain.value = 3;
+    lfo.connect(lfoG); lfoG.connect(o1.frequency);
+    o1.connect(f); o2.connect(o2g); o2g.connect(f); f.connect(g); g.connect(master);
+    o1.start(); o2.start(); lfo.start();
+    eng = { o1, o2, f, g };
+    noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+    const d = noise.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  function unlock() {
+    if (!ctx) {
+      init();
+      if (!ctx) return;
+      const b = ctx.createBufferSource();          // silent blip unlocks iOS audio
+      b.buffer = ctx.createBuffer(1, 1, 22050);
+      b.connect(ctx.destination);
+      b.start(0);
+    }
+    if (ctx.state !== 'running') ctx.resume();
+  }
+  const live = () => ctx && ctx.state === 'running' && !muted;
+  function env(gain, t, peak, attack, decay) {
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(peak, t + attack);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + attack + decay);
+  }
+  function noiseHit(t, dur, type, f0, f1, peak) {
+    const src = ctx.createBufferSource(); src.buffer = noise;
+    const flt = ctx.createBiquadFilter(); flt.type = type; flt.Q.value = 1.4;
+    flt.frequency.setValueAtTime(f0, t); flt.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    const g = ctx.createGain(); env(g, t, peak, 0.01, dur);
+    src.connect(flt); flt.connect(g); g.connect(master);
+    src.start(t, Math.random() * 0.5); src.stop(t + dur + 0.05);
+  }
+  function tone(t, type, f0, f1, dur, peak) {
+    const o = ctx.createOscillator(); o.type = type;
+    o.frequency.setValueAtTime(f0, t);
+    if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    const g = ctx.createGain(); env(g, t, peak, 0.008, dur);
+    o.connect(g); g.connect(master); o.start(t); o.stop(t + dur + 0.05);
+  }
+  return {
+    unlock,
+    engine(speedFrac, level) {
+      if (!ctx) return;
+      const t = ctx.currentTime, hz = 46 + speedFrac * 74;
+      eng.o1.frequency.setTargetAtTime(hz, t, 0.08);
+      eng.o2.frequency.setTargetAtTime(hz / 2, t, 0.08);
+      eng.f.frequency.setTargetAtTime(360 + speedFrac * 1400, t, 0.1);
+      eng.g.gain.setTargetAtTime(0.1 * level, t, 0.12);
+    },
+    whoosh() { if (!live()) return; noiseHit(ctx.currentTime, 0.38, 'bandpass', 500, 3200, 0.55); },
+    crunch() {
+      if (!live()) return;
+      const t = ctx.currentTime;
+      noiseHit(t, 0.7, 'lowpass', 2600, 160, 0.95);
+      tone(t, 'sine', 120, 36, 0.5, 0.9);
+      tone(t + 0.02, 'square', 240, 80, 0.14, 0.18);
+      noiseHit(t + 0.09, 0.3, 'highpass', 3000, 7000, 0.3);   // glass
+      noiseHit(t + 0.25, 0.25, 'bandpass', 1800, 900, 0.2);
+    },
+    thud() { if (!live()) return; const t = ctx.currentTime; tone(t, 'sine', 140, 50, 0.22, 0.7); noiseHit(t, 0.18, 'lowpass', 1500, 300, 0.4); },
+    chime() {
+      if (!live()) return;
+      const t = ctx.currentTime;
+      tone(t, 'triangle', 880, 880, 0.22, 0.35);
+      tone(t + 0.07, 'triangle', 1318.5, 1318.5, 0.26, 0.3);
+      tone(t + 0.14, 'sine', 1760, 1760, 0.4, 0.22);
+    },
+    fanfare() {
+      if (!live()) return;
+      const t = ctx.currentTime, n = [523.25, 659.25, 783.99, 1046.5];
+      for (let i = 0; i < n.length; i++) tone(t + i * 0.11, 'triangle', n[i], n[i], 0.28, 0.32);
+      tone(t + 0.46, 'triangle', 1046.5, 1046.5, 0.7, 0.32);
+      tone(t + 0.46, 'triangle', 783.99, 783.99, 0.7, 0.22);
+    },
+    horn() {
+      if (!live()) return;
+      const t = ctx.currentTime;
+      for (const dt of [0, 0.22]) { tone(t + dt, 'square', 392, 392, 0.16, 0.12); tone(t + dt, 'square', 494, 494, 0.16, 0.1); }
+    },
+    get muted() { return muted; },
+    setMuted(m) {
+      muted = m;
+      store.set('pedro.muted', m ? '1' : '0');
+      if (master) master.gain.setTargetAtTime(m ? 0 : C.masterVolume, ctx.currentTime, 0.02);
+    },
+    suspend() { if (ctx && ctx.state === 'running') ctx.suspend(); },
+    state() { return ctx ? ctx.state : 'none'; },
+  };
+})();
+window.__pedroAudio = Sfx;
+
+// ---------- Highway mile signs (canvas-texture gantry, redrawn once per sign) ----------
+const signs = (() => {
+  const cv = document.createElement('canvas');
+  cv.width = 512; cv.height = 160;
+  const g2 = cv.getContext('2d');
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const group = new THREE.Group();
+  const metal = new THREE.MeshLambertMaterial({ color: 0x8a9098, flatShading: true });
+  for (const side of [-1, 1]) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.35, 7.6, 0.35), metal);
+    post.position.set(side * (RAIL_X + 0.7), 3.8, 0);
+    group.add(post);
+  }
+  const beam = new THREE.Mesh(new THREE.BoxGeometry(RAIL_X * 2 + 1.8, 0.45, 0.45), metal);
+  beam.position.y = 7.4;
+  const panel = new THREE.Mesh(new THREE.PlaneGeometry(9.6, 3.0), new THREE.MeshBasicMaterial({ map: tex }));
+  panel.position.set(0, 5.9, 0.3);
+  group.add(beam, panel);
+  group.visible = false;
+  scene.add(group);
+  let index = 0, atSigma = 0;
+  function draw(n) {
+    g2.fillStyle = '#1d7a45'; g2.fillRect(0, 0, 512, 160);
+    g2.strokeStyle = '#f2f2f2'; g2.lineWidth = 6; g2.strokeRect(8, 8, 496, 144);
+    g2.fillStyle = '#ffffff'; g2.textAlign = 'center'; g2.textBaseline = 'middle';
+    const line2 = n < 0 ? (-n) + (n === -1 ? ' MILE' : ' MILES') : n === 0 ? 'EXIT NOW →' : n + (n === 1 ? ' MI BEHIND YOU' : ' MI BEHIND YOU');
+    g2.font = '900 54px -apple-system, Helvetica, Arial, sans-serif';
+    g2.fillText('GAME NIGHT', 256, 58);
+    g2.font = '800 40px -apple-system, Helvetica, Arial, sans-serif';
+    g2.fillText(line2, 256, 116);
+    tex.needsUpdate = true;
+  }
+  function place(fromSigma) {
+    // signs at milestone + n miles (n integer), skipping any within ~0.3 mi of the start
+    const m = C.milestoneMiles, startMiles = fromSigma / Core.METERS_PER_MILE;
+    index = Math.ceil(startMiles + (C.fogFar + 15) / Core.METERS_PER_MILE - m);
+    atSigma = (m + index) * Core.METERS_PER_MILE;
+    draw(index);
+  }
+  return {
+    reset(fromSigma) { place(fromSigma); },
+    update(sigma) {
+      const z = -(atSigma - sigma);
+      if (z > 30) { index++; atSigma = (C.milestoneMiles + index) * Core.METERS_PER_MILE; draw(index); return; }
+      group.visible = z > -C.fogFar - 20;
+      group.position.z = z;
+    },
+    hide() { group.visible = false; },
+  };
+})();
+
 // ---------- Game state ----------
 const URL_SEED = (() => {
   const q = new URLSearchParams(location.search).get('seed');
@@ -1132,6 +1336,7 @@ function resetRun() {
   game.sigma = START_SIGMA; game.time = 0; game.score = 0; game.crashT = 0; game.spin = 0; game.slide = 0;
   game.nearMisses = 0; game.milestoneHit = false; game.laneLeftAt.fill(-99);
   game.shield = false; game.effect = -1; game.effectT = 0; game.invulnT = 0; game.plowed = 0; game.powerups = 0;
+  signs.reset(START_SIGMA);
   ui.banner.classList.add('hidden');
   player.lane = C.startLane; player.x = player.fromX = laneX(C.startLane); player.t = 1; player.queued = 0; player.bumpT = 0;
   player.group.rotation.set(0, 0, 0);
@@ -1144,6 +1349,7 @@ function startRun() {
   ui.title.classList.add('hidden');
   ui.over.classList.add('hidden');
   ui.hud.classList.remove('hidden');
+  ui.pauseBtn.classList.remove('hidden');
   hudCache.score = hudCache.miles = hudCache.mph = -1; hudCache.past = null; hudCache.effect = -2; hudCache.shield = null; hudCache.bar = -1;
 }
 
@@ -1156,6 +1362,8 @@ function crash(h, hx) {
   game.slide = side * 5;
   player.t = 1; player.queued = 0;
   h.bounced = true; h.bvx = -side * 6; h.bvy = 5; h.spin = -side * 4;
+  Sfx.crunch();
+  ui.pauseBtn.classList.add('hidden');
 }
 
 function gameOver() {
@@ -1180,6 +1388,7 @@ function gameOver() {
   ui.slowmoFx.classList.add('hidden'); ui.invulnFx.classList.add('hidden');
   ui.over.classList.remove('hidden');
   game.lastRoast = roast;
+  game.shareText = 'I got Pedro ' + miles.toFixed(2) + ' miles toward game night. Score: ' + score.toLocaleString() + '. Beat that: ' + C.shareUrl;
 }
 
 function pause() {
@@ -1187,14 +1396,16 @@ function pause() {
   game.prevState = game.state;
   game.state = 'paused';
   ui.pause.classList.remove('hidden');
+  Sfx.engine(0, 0);
 }
 function resume() {
   if (game.state !== 'paused') return;
+  Sfx.unlock();
   game.state = game.prevState;
   ui.pause.classList.add('hidden');
   lastFrame = performance.now();
 }
-document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) { pause(); Sfx.suspend(); } });
 window.addEventListener('blur', pause);
 
 // ---------- UI ----------
@@ -1204,6 +1415,7 @@ const ui = {
   hudEffectBar: $('hudEffectBar'), slowmoFx: $('slowmoFx'), invulnFx: $('invulnFx'),
   hud: $('hud'), title: $('titleScreen'), pause: $('pauseScreen'), over: $('overScreen'),
   overRoast: $('overRoast'), overScore: $('overScore'), overMiles: $('overMiles'), overBest: $('overBest'),
+  pauseBtn: $('pauseBtn'), muteBtn: $('muteBtn'), shareBtn: $('shareBtn'), toast: $('toast'),
   overNewBest: $('overNewBest'), overTitle: $('overTitle'), banner: $('banner'), bannerSub: $('bannerSub'),
   confetti: $('confetti'), floaters: Array.from(document.querySelectorAll('.floater')), overSeed: $('overSeed'), tailWarn: $('tailWarn'), tailWarnDir: $('tailWarnDir'),
   score: $('hudScoreVal'), miles: $('hudMilesVal'), milesLabel: $('hudMilesLabel'), speed: $('hudSpeedVal'),
@@ -1256,7 +1468,9 @@ function onAnyStartInput(isKey, key) {
 }
 window.addEventListener('keydown', (e) => {
   if (e.repeat) return;
+  Sfx.unlock();
   const k = e.key;
+  if (k === 'm' || k === 'M') { toggleMute(); return; }
   if (k === 'ArrowLeft' || k === 'ArrowRight' || k === ' ' || k === 'ArrowUp' || k === 'ArrowDown') e.preventDefault();
   if (onAnyStartInput(true, k)) return;
   if (k === 'ArrowLeft' || k === 'a' || k === 'A') requestLane(-1);
@@ -1283,6 +1497,7 @@ window.addEventListener('touchmove', (e) => {
   }
 }, { passive: false });
 window.addEventListener('touchend', (e) => {
+  Sfx.unlock();
   if (e.target.closest && e.target.closest('button, a')) return;
   e.preventDefault();
   for (const t of e.changedTouches) {
@@ -1296,10 +1511,63 @@ document.addEventListener('gesturestart', (e) => e.preventDefault());
 document.addEventListener('dblclick', (e) => e.preventDefault());
 // Mouse (desktop) — click left/right half, or click to start
 window.addEventListener('mousedown', (e) => {
+  Sfx.unlock();
   if (e.target.closest && e.target.closest('button, a')) return;
   if (onAnyStartInput()) return;
   requestLane(e.clientX < window.innerWidth / 2 ? -1 : 1);
 });
+
+// ---------- Buttons: mute, pause, share ----------
+function toggleMute() {
+  Sfx.setMuted(!Sfx.muted);
+  ui.muteBtn.classList.toggle('muted', Sfx.muted);
+  ui.muteBtn.setAttribute('aria-label', Sfx.muted ? 'Unmute' : 'Mute');
+}
+ui.muteBtn.classList.toggle('muted', Sfx.muted);
+ui.muteBtn.addEventListener('click', (e) => { e.stopPropagation(); Sfx.unlock(); toggleMute(); ui.muteBtn.blur(); });
+ui.pauseBtn.addEventListener('click', (e) => {
+  e.stopPropagation(); Sfx.unlock();
+  if (game.state === 'play') pause(); else if (game.state === 'paused') resume();
+  ui.pauseBtn.blur();
+});
+
+let toastTimer = 0;
+function toast(msg) {
+  ui.toast.textContent = msg;
+  ui.toast.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => ui.toast.classList.add('hidden'), 2600);
+}
+function legacyCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;-webkit-user-select:text;user-select:text;';
+  document.body.appendChild(ta);
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  ta.remove();
+  return ok;
+}
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text).then(() => true, () => legacyCopy(text));
+  }
+  return Promise.resolve(legacyCopy(text));
+}
+const IS_TOUCH = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+async function share() {
+  const text = game.shareText || ('Pedro Makes It to Game Night: ' + C.shareUrl);
+  if (navigator.share && IS_TOUCH) {
+    try { await navigator.share({ text }); return; }
+    catch (e) { if (e && e.name === 'AbortError') return; }   // user cancelled the sheet
+  }
+  const ok = await copyText(text);
+  toast(ok ? 'Copied! Paste it in the group chat.' : text);
+}
+ui.shareBtn.addEventListener('click', (e) => { e.stopPropagation(); share(); ui.shareBtn.blur(); });
 
 // ---------- Camera ----------
 const camLook = new THREE.Vector3();
@@ -1512,11 +1780,12 @@ function hitMilestone() {
   if (window.__pedroAudio) window.__pedroAudio.fanfare();
 }
 
-let tailText = null;
+let tailText = '';
 function updateTailWarn() {
   const lane = game.state === 'play' ? game.tailWarnLane : -9;
   const text = lane < 0 ? '' : lane < player.lane ? '◀ LEFT' : lane > player.lane ? 'RIGHT ▶' : '▼ YOUR LANE';
   if (text === tailText) return;
+  if (tailText === '' && text !== '') Sfx.horn();
   tailText = text;
   ui.tailWarn.classList.toggle('hidden', text === '');
   ui.tailWarnDir.textContent = text;
@@ -1595,7 +1864,12 @@ function update(realDt) {
     if (crashing) { game.crashT += realDt; if (game.crashT >= C.crashSec) gameOver(); }
     updateHud();
     updateTailWarn();
+    signs.update(game.sigma);
+    const sf = (game.mph - C.startSpeedMph) / (C.maxSpeedMph - C.startSpeedMph);
+    if ((engineTick = (engineTick + 1) % 4) === 0)
+      Sfx.engine(sf * worldTimeScale(), crashing ? Math.max(0, 1 - game.crashT / C.crashSec) : 1);
   } else if (game.state === 'over') {
+    if ((engineTick = (engineTick + 1) % 15) === 0) Sfx.engine(0, 0);
     // frozen wreck behind the game-over screen
   } else {
     // Title: idle cruise
@@ -1608,7 +1882,7 @@ function update(realDt) {
   if (DEBUG) { updateDebugStrips(); updateDebug(miles); }
 }
 
-let debugTick = 0;
+let debugTick = 0, engineTick = 0;
 function updateDebug(miles) {
   if ((debugTick = (debugTick + 1) % 10) !== 0) return;   // ~6 Hz text refresh
   const sp = game.spawner;
@@ -1633,6 +1907,7 @@ window.__pedro = {
       miles: game.sigma / Core.METERS_PER_MILE, score: game.score, seed: game.seed, liveHazards: live,
       rows: game.spawner ? game.spawner.rowCount : 0, roast: game.lastRoast || '',
       nearMisses: game.nearMisses, milestoneHit: game.milestoneHit,
+      audio: Sfx.state(), muted: Sfx.muted, shareText: game.shareText || '',
       shield: game.shield, effect: game.effect, effectT: game.effectT, powerups: game.powerups, plowed: game.plowed };
   },
   // Upcoming rows on the distance axis (used by the test autopilot in tools/smoke.mjs)

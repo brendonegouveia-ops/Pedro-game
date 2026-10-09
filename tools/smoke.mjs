@@ -267,6 +267,82 @@ if (!QUICK) await autopilot('brutal', '?debug&seed=4242&start=8', 30);
   await p3.close();
 }
 
+// --- Audio, mute, share ---
+{
+  // Mobile: navigator.share is used (stubbed to capture the payload)
+  const pm = await context.newPage();
+  const errs = [];
+  pm.on('pageerror', (e) => errs.push(e.message));
+  pm.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
+  await pm.addInitScript(() => { navigator.share = (d) => { window.__shared = d; return Promise.resolve(); }; });
+  await pm.goto(pathToFileURL(path.join(root, 'index.html')).href + '?seed=5');
+  await pm.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  const cdp2 = await context.newCDPSession(pm);
+  await cdp2.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 200, y: 400 }] });
+  await cdp2.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await sleep(400);
+  let a = await pm.evaluate(() => window.__pedro.snapshot());
+  a.audio === 'running' ? ok('WebAudio unlocked by first tap') : fail('audio state after tap: ' + a.audio);
+  await pm.keyboard.press('m');
+  a = await pm.evaluate(() => window.__pedro.snapshot());
+  a.muted ? ok('M toggles mute') : fail('mute did not toggle');
+  await pm.reload();
+  await pm.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  a = await pm.evaluate(() => window.__pedro.snapshot());
+  const btnMuted = await pm.evaluate(() => document.getElementById('muteBtn').classList.contains('muted'));
+  a.muted && btnMuted ? ok('mute persists in localStorage across reloads') : fail('mute not persisted');
+  await pm.click('#muteBtn');
+  a = await pm.evaluate(() => window.__pedro.snapshot());
+  !a.muted && a.state === 'title' ? ok('mute button toggles without starting the run') : fail('mute button: ' + JSON.stringify({ m: a.muted, s: a.state }));
+  // crash quickly, then share
+  await pm.keyboard.press('Enter');
+  let t0 = Date.now();
+  while (Date.now() - t0 < 90000) { a = await pm.evaluate(() => window.__pedro.snapshot()); if (a.state === 'over') break; await sleep(200); }
+  await sleep(300);
+  await pm.tap('#shareBtn');
+  await sleep(300);
+  const shared = await pm.evaluate(() => window.__shared && window.__shared.text);
+  const re = /^I got Pedro \d+\.\d\d miles toward game night\. Score: [\d,]+\. Beat that: https:\/\/brendonegouveia-ops\.github\.io\/pedro-game\/$/;
+  re.test(shared || '') ? ok(`navigator.share payload: "${shared}"`) : fail('share payload: ' + shared);
+  a = await pm.evaluate(() => window.__pedro.snapshot());
+  a.state === 'over' ? ok('tapping Share does not restart the run') : fail('share tap restarted the run');
+  await pm.screenshot({ path: path.join(outDir, '8-gameover-share.png') });
+  if (errs.length) fail('share page errors: ' + errs.join(' | '));
+  await pm.close();
+
+  // Desktop: clipboard fallback
+  const dctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, permissions: ['clipboard-read', 'clipboard-write'] });
+  await dctx.route(cdnUrl, (route) => route.fulfill({ status: 200, body: localThree, headers: { 'Content-Type': 'application/javascript', 'Access-Control-Allow-Origin': '*' } }));
+  const pd = await dctx.newPage();
+  await pd.goto(pathToFileURL(path.join(root, 'index.html')).href + '?seed=5');
+  await pd.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  await pd.keyboard.press('Enter');
+  t0 = Date.now();
+  while (Date.now() - t0 < 90000) { a = await pd.evaluate(() => window.__pedro.snapshot()); if (a.state === 'over') break; await sleep(200); }
+  await sleep(300);
+  await pd.click('#shareBtn');
+  await sleep(400);
+  const clip = await pd.evaluate(() => navigator.clipboard.readText().catch((e) => 'ERR ' + e.message));
+  re.test(clip) ? ok('desktop Share copies to clipboard') : fail('clipboard: ' + clip);
+  const toastText = await pd.evaluate(() => document.getElementById('toast').textContent);
+  /Copied/.test(toastText) ? ok('copy confirmation toast shown') : fail('toast: ' + toastText);
+  await pd.screenshot({ path: path.join(outDir, '9-desktop-gameover.png') });
+  await dctx.close();
+}
+
+// --- Mile sign renders near a mile marker ---
+{
+  const ps = await context.newPage();
+  await ps.goto(pathToFileURL(path.join(root, 'index.html')).href + '?seed=31&debug&start=1.87');
+  await ps.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  await ps.keyboard.press('Enter');
+  await ps.evaluate(() => window.__pedro.grant(2));   // invincible so it survives to the sign
+  await ps.waitForFunction(() => window.__pedro.snapshot().miles >= 1.97, null, { timeout: 30000 });
+  await ps.screenshot({ path: path.join(outDir, '10-mile-sign.png') });
+  ok('mile-sign screenshot captured (tools/out/10-mile-sign.png)');
+  await ps.close();
+}
+
 // --- Extra checks registered by later increments ---
 const extra = await page.evaluate(() => (window.__pedro.selfTest ? window.__pedro.selfTest() : []));
 for (const r of extra) (r.pass ? ok : fail)(r.name + (r.detail ? ' — ' + r.detail : ''));
