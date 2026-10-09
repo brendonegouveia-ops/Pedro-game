@@ -55,6 +55,22 @@
   .best { margin-top: 18px; font-weight: 700; opacity: 0.85; font-variant-numeric: tabular-nums; }
   @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
 
+  .overTitle { font-size: clamp(38px, 12vw, 72px); font-weight: 900; margin: 0 0 6px; color: #ff5a4f;
+    text-shadow: 0 3px 0 #5a1010, 0 6px 18px rgba(0,0,0,0.6); letter-spacing: -0.01em; text-transform: uppercase; }
+  .roast { font-size: 18px; font-weight: 700; max-width: 420px; margin: 4px 0 18px; line-height: 1.3; color: #ffe1a8; }
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; width: min(420px, 100%); margin-bottom: 14px; }
+  .stat { background: rgba(10,12,22,0.6); border-radius: 12px; padding: 8px 4px; font-variant-numeric: tabular-nums; }
+  .stat b { display: block; font-size: 22px; }
+  .stat small { font-size: 10px; letter-spacing: 0.1em; opacity: 0.7; font-weight: 700; }
+  .newBest { color: #ffd166; font-weight: 900; letter-spacing: 0.08em; margin-bottom: 10px; animation: pulse 0.8s ease-in-out infinite; }
+  .seedline { margin-top: 14px; font-size: 11px; opacity: 0.55; font-variant-numeric: tabular-nums; }
+  #tailWarn {
+    position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 18px); transform: translateX(-50%);
+    background: rgba(200, 20, 30, 0.85); padding: 8px 14px; border-radius: 999px; font-weight: 900; font-size: 15px;
+    letter-spacing: 0.06em; box-shadow: 0 0 24px rgba(255,40,40,0.6); animation: blink 0.35s steps(2) infinite; white-space: nowrap;
+  }
+  @keyframes blink { 50% { opacity: 0.55; } }
+
   #debugPanel {
     position: fixed; left: 8px; bottom: calc(env(safe-area-inset-bottom) + 8px);
     background: rgba(0,0,0,0.65); color: #7CFF9B; font: 11px/1.35 ui-monospace, Menlo, monospace;
@@ -87,6 +103,21 @@
   <h1 class="title" style="font-size:44px">Paused</h1>
   <div class="cta">Tap / press any key to resume</div>
 </div>
+
+<div id="overScreen" class="layer screen hidden">
+  <div class="overTitle">Wrecked</div>
+  <p class="roast" id="overRoast"></p>
+  <div class="newBest hidden" id="overNewBest">NEW BEST!</div>
+  <div class="stats">
+    <div class="stat"><small>SCORE</small><b id="overScore">0</b></div>
+    <div class="stat"><small>DISTANCE</small><b id="overMiles">0.00 mi</b></div>
+    <div class="stat"><small>BEST</small><b id="overBest">0</b></div>
+  </div>
+  <div class="cta">Tap / Space to drive again</div>
+  <div class="seedline" id="overSeed"></div>
+</div>
+
+<div id="tailWarn" class="hidden">⚠ TAILGATER <span id="tailWarnDir"></span></div>
 
 <div id="debugPanel" class="hidden"></div>
 
@@ -133,6 +164,46 @@ const CONFIG = {
   dashLength: 3,
   dashPeriod: 10,
   dtClamp: 1 / 30,             // max simulated seconds per frame (prevents tunneling)
+
+  // --- Traffic & hazards ---
+  trafficSpeedFrac: 0.25,      // all traffic drives at this fraction of Pedro's speed (keeps rows rigid)
+  tailgaterSpeedFrac: 1.4,     // tailgaters are faster than Pedro and come from behind
+  hitboxScale: 0.8,            // hitboxes are this fraction of the visual size (forgiving)
+  playerSize: [1.84, 4.66],    // [width, length] meters
+  hazardSize: {                // [width, length] meters (visual)
+    sedan: [1.84, 4.66], truck: [2.5, 12.6], debris: [2.3, 1.6], changer: [1.84, 4.66], tailgater: [1.84, 4.66],
+  },
+  // Hazards unlock progressively by distance (miles). Sedans are always on.
+  unlockMiles: { truck: 0.35, debris: 0.8, changer: 1.5, tailgater: 2.2 },
+  // Relative weight of each hazard type at difficulty [0, 1] (only unlocked types are drawn).
+  hazardWeights: { sedan: [1.0, 0.7], truck: [0.35, 0.8], debris: [0.3, 0.6] },
+  changerChance: [0.15, 0.45], // chance a sedan is a lane-changer (once unlocked), difficulty 0 → 1
+  tailgaterChance: [0.10, 0.30], // chance per row of a tailgater (once unlocked)
+  blinkerSec: 0.75,            // lane-changer blinker telegraph before moving
+  changerMoveSec: 0.7,         // how long the lane-changer takes to cross
+  changerLeadSec: 0.6,         // lane-changer finishes moving this long before reaching Pedro
+  tailgaterWarnMeters: 75,     // rear-warning HUD shows when a tailgater is this close behind
+  tailgaterExitAhead: 24,      // tailgater fades out once this far ahead of Pedro
+
+  // --- Spawn rows (all "Sec" values are seconds of Pedro's travel) ---
+  rowGapSec: [1.7, 0.55],      // clear gap between rows at difficulty [0, 1]
+  rowGapJitter: 0.2,           // ± fraction applied to each gap
+  rowLanesBlocked: [[0.85, 0.15, 0.0], [0.15, 0.5, 0.35]], // P(1, 2, 3 lanes blocked) at difficulty [0, 1]
+  emptyRowChance: [0.15, 0.0],
+  rowStaggerSec: 0.15,         // ± stagger of hazards inside one row
+  startClearMeters: 140,       // empty road at the start of a run
+  spawnAheadMeters: 185,       // traffic materializes this far ahead (beyond the fog)
+  despawnBehindMeters: 14,
+  ghostBehindMeters: 12,       // how far behind Pedro objects are still visible (overlap checks)
+
+  // --- Fairness invariant ---
+  reactionSec: 0.25,           // margin added to every lane change when validating a row
+  maxRowAttempts: 8,           // regenerate a failing row this many times, then fall back to an empty row
+
+  // --- Crash ---
+  crashSlowmo: 0.25,           // time scale during the crash
+  crashSec: 1.3,               // real seconds of slow-mo spin-out before the game-over screen
+  restartLockSec: 0.6,         // ignore input this long after game over appears
 };
 
 // Game-over roast lines. {miles} and {score} are substituted.
@@ -140,6 +211,14 @@ const ROASTS = [
   "Another Jetta, another insurance claim.",
   "Pedro's new Jetta lasted {miles} miles.",
   "The group chat has been notified.",
+  "State Farm just sent Pedro a breakup text.",
+  "Game night is BYOJ: bring your own Jetta. Pedro can't.",
+  "Somewhere, a Volkswagen dealer just smiled.",
+  "Pedro's insurance premium just did a lane change too.",
+  "Tell the group to start without him. Again.",
+  "{miles} miles. A new personal best for the tow truck driver.",
+  "The Jetta had a full tank and a bright future.",
+  "Pedro blames the other car. The other car was parked.",
 ];
 
 // ============================================================
@@ -184,7 +263,219 @@ const PedroCore = (() => {
 
   function laneX(i) { return (i - (CONFIG.lanes - 1) / 2) * CONFIG.laneWidth; }
 
-  return { METERS_PER_MILE, MPH_TO_MPS, mulberry32, lerp, clamp01, difficulty, speedMph, speedAt, laneX };
+  // ---------------- Hazards ----------------
+  // Every hazard is placed on Pedro's distance axis (sigma, meters traveled). A hazard
+  // with speed fraction k is at world distance (1-k)*(sigma_h - sigma) ahead of Pedro,
+  // so its position is an exact function of sigma — rows stay rigid as speed changes,
+  // and each hazard blocks its lane(s) for the sigma interval [sigma_h - hs, sigma_h + hs].
+  const T = { SEDAN: 0, TRUCK: 1, DEBRIS: 2, CHANGER: 3, TAILGATER: 4, POWERUP: 5 };
+  const TYPE_NAMES = ['sedan', 'truck', 'debris', 'changer', 'tailgater', 'powerup'];
+
+  function typeK(type) {
+    if (type === T.DEBRIS) return 0;
+    if (type === T.TAILGATER) return CONFIG.tailgaterSpeedFrac;
+    return CONFIG.trafficSpeedFrac;
+  }
+  function typeSize(type) {
+    return type === T.POWERUP ? [1.6, 1.6] : CONFIG.hazardSize[TYPE_NAMES[type]];
+  }
+  // Half-length (in sigma) of the interval during which this hazard's hitbox overlaps Pedro's.
+  function halfSpan(type) {
+    const reach = (CONFIG.playerSize[1] + typeSize(type)[1]) * CONFIG.hitboxScale / 2;
+    return reach / Math.abs(1 - typeK(type));
+  }
+  // Seconds a full lane change "costs" when validating fairness.
+  function laneChangeSec() { return CONFIG.laneChangeMs / 1000 + CONFIG.reactionSec; }
+
+  // World-space range (meters ahead of Pedro, negative = behind) where a hazard can be seen.
+  function visibleRange(type, out) {
+    out[0] = -CONFIG.ghostBehindMeters;
+    out[1] = type === T.TAILGATER ? CONFIG.tailgaterExitAhead : CONFIG.fogFar;
+    return out;
+  }
+  // Would two objects in the same lane visibly drive through each other?
+  const _ra = [0, 0], _rb = [0, 0];
+  function ghostConflict(ta, sa, tb, sb) {
+    const ka = typeK(ta), kb = typeK(tb);
+    const pad = (typeSize(ta)[1] + typeSize(tb)[1]) / 2 + 2;
+    if (Math.abs(ka - kb) < 1e-9) return Math.abs((1 - ka) * (sa - sb)) < pad;
+    const sm = ((1 - ka) * sa - (1 - kb) * sb) / (kb - ka);   // sigma at which their centers coincide
+    const ahead = (1 - ka) * (sa - sm);                          // where that happens (m ahead of Pedro)
+    // they overlap for pad/|ka-kb| of sigma, drifting up to this far while overlapping:
+    const drift = (pad / Math.abs(ka - kb)) * Math.max(Math.abs(1 - ka), Math.abs(1 - kb)) / 2;
+    visibleRange(ta, _ra); visibleRange(tb, _rb);
+    const lo = Math.max(_ra[0], _rb[0]) - pad - drift, hi = Math.min(_ra[1], _rb[1]) + pad + drift;
+    return ahead >= lo && ahead <= hi;
+  }
+
+  function weightAt(pair, d) { return lerp(pair[0], pair[1], d); }
+
+  // ---------------- Spawner ----------------
+  // Generates spawn rows from a seeded PRNG and enforces the FAIRNESS INVARIANT:
+  // each row k gets a guaranteed-open lane g_k such that
+  //   (1) g_k is unblocked by every hazard of row k for the row's whole sigma span [A_k, B_k],
+  //   (2) |g_k - g_{k-1}| lane changes fit in the clear gap (B_{k-1}, A_k), each costing
+  //       (laneChangeMs + reactionSec) at the speed Pedro will have at A_k.
+  // Rows never overlap in sigma and every hazard (incl. lane-changers on both lanes and
+  // tailgaters) lies inside its row's span, so (1)+(2) chain into a survivable path.
+  // A row that fails is regenerated; after maxRowAttempts it becomes an empty row.
+  function createSpawner(seed, startLane) {
+    const rng = mulberry32(seed);
+    const POOL = 192, ROWS = 48, RECENT = 96;
+    const hazards = [];
+    for (let i = 0; i < POOL; i++) hazards.push({
+      active: false, id: 0, type: 0, lane: 0, lane2: 0, k: 0, sigma: 0, hs: 0, w: 0, l: 0, row: 0, color: 0, variant: 0,
+      moveStart: 0, moveEnd: 0, blinkStart: 0, power: 0,
+      vis: null, hit: false, bounced: false, nearMissed: false, minDx: 99, bx: 0, by: 0, bz: 0, bvx: 0, bvy: 0, bvz: 0, spin: 0, ry: 0, fade: 1,
+    });
+    const rows = [];
+    for (let i = 0; i < ROWS; i++) rows.push({ index: -1, A: 0, B: 0, g: 0, gPrev: 0, budget: 0, count: 0, fallback: false });
+    // Ring of recently committed hazards, for drive-through (ghost) checks.
+    const rType = new Int8Array(RECENT), rLaneMask = new Int8Array(RECENT), rSigma = new Float64Array(RECENT);
+    let rHead = 0, rCount = 0;
+
+    // Scratch (no per-row allocation)
+    const order = new Int8Array(CONFIG.lanes);
+    const cType = new Int8Array(8), cLane = new Int8Array(8), cLane2 = new Int8Array(8);
+    const cOff = new Float64Array(8), cColor = new Int8Array(8), cVariant = new Int8Array(8);
+    const openLanes = new Int8Array(CONFIG.lanes);
+
+    const st = {
+      seed, rng, hazards, rows, rowCount: 0, lastB: CONFIG.startClearMeters, lastG: startLane,
+      fallbacks: 0, retries: 0, nextId: 1,
+      horizon: CONFIG.spawnAheadMeters / (1 - CONFIG.trafficSpeedFrac),
+    };
+
+    function pickBlockedCount(d) {
+      const a = CONFIG.rowLanesBlocked[0], b = CONFIG.rowLanesBlocked[1];
+      const p1 = lerp(a[0], b[0], d), p2 = lerp(a[1], b[1], d), p3 = lerp(a[2], b[2], d);
+      const r = rng() * (p1 + p2 + p3);
+      return r < p1 ? 1 : r < p1 + p2 ? 2 : 3;
+    }
+    function pickType(d, miles) {
+      const W = CONFIG.hazardWeights, U = CONFIG.unlockMiles;
+      const ws = weightAt(W.sedan, d);
+      const wt = miles >= U.truck ? weightAt(W.truck, d) : 0;
+      const wd = miles >= U.debris ? weightAt(W.debris, d) : 0;
+      let r = rng() * (ws + wt + wd);
+      if (r < wt) return T.TRUCK;
+      r -= wt;
+      if (r < wd) return T.DEBRIS;
+      if (miles >= U.changer && rng() < weightAt(CONFIG.changerChance, d)) return T.CHANGER;
+      return T.SEDAN;
+    }
+    function ghostOk(type, laneMask, sigma) {
+      for (let i = 0; i < rCount; i++) {
+        if (!(rLaneMask[i] & laneMask)) continue;
+        if (ghostConflict(type, sigma, rType[i], rSigma[i])) return false;
+      }
+      return true;
+    }
+    function allocHazard() {
+      for (let i = 0; i < POOL; i++) {
+        const h = hazards[(st.nextId + i) % POOL];
+        if (!h.active) return h;
+      }
+      return null; // pool exhausted (should not happen with sane CONFIG)
+    }
+
+    // Build one row. Returns the committed row record.
+    function generateRow() {
+      const B0 = st.lastB, miles = B0 / METERS_PER_MILE, d = difficulty(miles);
+      const gapSec = lerp(CONFIG.rowGapSec[0], CONFIG.rowGapSec[1], d) * (1 + (rng() * 2 - 1) * CONFIG.rowGapJitter);
+      const gapSigma = gapSec * speedAt(B0);
+      const A = B0 + gapSigma;
+      const vA = speedAt(A);                        // speed is monotonic → worst case over the gap
+      const budget = Math.floor(gapSigma / (vA * laneChangeSec()));
+      const gPrev = st.lastG;
+
+      let count = 0, mask = 0, B = A, ok = false, nOpen = 0, fallback = false;
+      for (let attempt = 0; attempt < CONFIG.maxRowAttempts && !ok; attempt++) {
+        if (attempt > 0) st.retries++;
+        count = 0; mask = 0;
+        if (rng() < weightAt(CONFIG.emptyRowChance, d)) { ok = true; break; }
+        const n = pickBlockedCount(d);
+        for (let i = 0; i < CONFIG.lanes; i++) order[i] = i;
+        for (let i = CONFIG.lanes - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); const t = order[i]; order[i] = order[j]; order[j] = t; }
+        let tailgaterUsed = false;
+        const wantTailgater = miles >= CONFIG.unlockMiles.tailgater && rng() < weightAt(CONFIG.tailgaterChance, d);
+        for (let i = 0; i < n; i++) {
+          const lane = order[i];
+          if (mask & (1 << lane)) continue;
+          let type = pickType(d, miles), lane2 = lane;
+          if (wantTailgater && !tailgaterUsed && i === n - 1) { type = T.TAILGATER; tailgaterUsed = true; }
+          if (type === T.CHANGER) {
+            const dir = rng() < 0.5 ? -1 : 1;
+            lane2 = lane + dir;
+            if (lane2 < 0 || lane2 >= CONFIG.lanes || (mask & (1 << lane2))) lane2 = lane - dir;
+            if (lane2 < 0 || lane2 >= CONFIG.lanes || (mask & (1 << lane2))) { type = T.SEDAN; lane2 = lane; }
+          }
+          cType[count] = type; cLane[count] = lane; cLane2[count] = lane2;
+          cOff[count] = (rng() * 2 - 1) * CONFIG.rowStaggerSec * vA;
+          cColor[count] = Math.floor(rng() * 8); cVariant[count] = Math.floor(rng() * 2);
+          mask |= (1 << lane) | (1 << lane2);
+          count++;
+        }
+        // Row span on the sigma axis
+        let lo = Infinity, hi = -Infinity;
+        for (let i = 0; i < count; i++) {
+          const hs = halfSpan(cType[i]);
+          if (cOff[i] - hs < lo) lo = cOff[i] - hs;
+          if (cOff[i] + hs > hi) hi = cOff[i] + hs;
+        }
+        const shift = A - lo;
+        for (let i = 0; i < count; i++) cOff[i] += shift;
+        B = hi + shift;
+        // (1)+(2): reachable open lanes
+        nOpen = 0;
+        for (let l = 0; l < CONFIG.lanes; l++)
+          if (!(mask & (1 << l)) && Math.abs(l - gPrev) <= budget) openLanes[nOpen++] = l;
+        if (nOpen === 0) continue;
+        // No drive-through visuals against recent hazards
+        let ghostFree = true;
+        for (let i = 0; i < count && ghostFree; i++)
+          ghostFree = ghostOk(cType[i], (1 << cLane[i]) | (1 << cLane2[i]), cOff[i]);
+        if (!ghostFree) continue;
+        ok = true;
+      }
+      if (!ok) { count = 0; mask = 0; fallback = true; st.fallbacks++; }
+      if (count === 0) { B = A; nOpen = 0; for (let l = 0; l < CONFIG.lanes; l++) if (Math.abs(l - gPrev) <= budget) openLanes[nOpen++] = l; }
+
+      const g = openLanes[Math.floor(rng() * nOpen)];
+      const row = rows[st.rowCount % ROWS];
+      row.index = st.rowCount; row.A = A; row.B = B; row.g = g; row.gPrev = gPrev; row.budget = budget; row.count = count; row.fallback = fallback;
+
+      for (let i = 0; i < count; i++) {
+        const h = allocHazard();
+        if (!h) break;
+        const type = cType[i], sz = typeSize(type), vh = speedAt(cOff[i]);
+        h.active = true; h.id = st.nextId++; h.type = type; h.lane = cLane[i]; h.lane2 = cLane2[i];
+        h.k = typeK(type); h.sigma = cOff[i]; h.hs = halfSpan(type); h.w = sz[0]; h.l = sz[1];
+        h.row = st.rowCount; h.color = cColor[i]; h.variant = cVariant[i]; h.power = 0;
+        h.moveEnd = h.sigma - CONFIG.changerLeadSec * vh;
+        h.moveStart = h.moveEnd - CONFIG.changerMoveSec * vh;
+        h.blinkStart = h.moveStart - CONFIG.blinkerSec * vh;
+        h.vis = null; h.hit = false; h.bounced = false; h.nearMissed = false; h.minDx = 99; h.fade = 1; h.ry = 0; h.spin = 0;
+        h.bx = 0; h.by = 0; h.bvx = 0; h.bvy = 0;
+        rType[rHead] = type; rLaneMask[rHead] = (1 << h.lane) | (1 << h.lane2); rSigma[rHead] = h.sigma;
+        rHead = (rHead + 1) % RECENT; if (rCount < RECENT) rCount++;
+      }
+      st.lastB = B; st.lastG = g; st.rowCount++;
+      return row;
+    }
+
+    // Generate rows until the horizon is covered.
+    st.ensure = function (sigmaNow) {
+      let n = 0;
+      while (st.lastB < sigmaNow + st.horizon && n < 16) { generateRow(); n++; }
+      return n;
+    };
+    st.generateRow = generateRow;
+    return st;
+  }
+
+  return { METERS_PER_MILE, MPH_TO_MPS, mulberry32, lerp, clamp01, difficulty, speedMph, speedAt, laneX,
+    T, TYPE_NAMES, typeK, typeSize, halfSpan, laneChangeSec, ghostConflict, createSpawner };
 })();
 if (typeof window !== 'undefined') window.PedroCore = PedroCore;
 </script>
@@ -469,6 +760,127 @@ function makeGlowTexture() {
 
 function easeInOut(t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
 
+// ---------- Traffic & hazard visuals (pooled, never created during play) ----------
+const T = Core.T;
+const TRAFFIC_COLORS = [0xe63946, 0x1f6feb, 0xf5c518, 0x22b35e, 0xff7a1a, 0x9b51e0, 0x10b5b5, 0xff4f9a];
+const TAILGATER_COLOR = 0x1d1d24;
+const blinkerMat = new THREE.MeshBasicMaterial({ color: 0xffa31a, fog: false });
+const blinkerGeo = (side) => merge([
+  part(box(0.22, 0.14, 0.08), 0xffffff, side * 0.8, 0.8, -2.34),
+  part(box(0.22, 0.14, 0.08), 0xffffff, side * 0.8, 0.86, 2.33),
+  part(box(0.08, 0.1, 0.3), 0xffffff, side * 0.93, 0.78, -1.9),
+]);
+const blinkerGeoL = blinkerGeo(-1), blinkerGeoR = blinkerGeo(1);
+
+function buildTruck() {
+  const p = [];
+  p.push(part(plane(3.0, 13.2), 0x0b0b0d, 0, 0.03, 0));
+  p.push(part(box(2.0, 0.4, 12.2), 0x1c1d20, 0, 0.62, 0));                          // chassis
+  p.push(part(box(2.4, 2.5, 2.7), 0xbdbdbd, 0, 1.6, -4.95));                         // cab (tinted, darker)
+  p.push(part(box(2.12, 0.9, 0.06), 0x1a2030, 0, 2.3, -6.31));                       // windshield
+  p.push(part(box(2.3, 0.35, 0.1), 0x15171a, 0, 0.75, -6.32));                       // grille
+  p.push(part(box(2.5, 3.0, 9.4), 0xffffff, 0, 2.15, 1.55));                         // trailer (tinted)
+  p.push(part(box(2.52, 0.12, 9.42), 0x2a2c30, 0, 0.7, 1.55));                       // trailer skirt line
+  for (const z of [-5.0, 3.7, 5.2]) for (const x of [-1.05, 1.05])
+    p.push(part(cyl(0.5, 0.5, 0.36, 10), 0x111214, x, 0.5, z, 0, 0, Math.PI / 2));
+  return merge(p);
+}
+function buildTruckLights() {
+  const p = [];
+  for (const x of [-1.0, 1.0]) {
+    p.push(part(box(0.3, 0.22, 0.05), 0xff1428, x, 0.95, 6.27));
+    p.push(part(box(0.4, 0.2, 0.05), 0xfff6dc, x * 0.9, 1.0, -6.34));
+  }
+  for (const x of [-0.6, -0.2, 0.2, 0.6]) p.push(part(box(0.14, 0.1, 0.1), 0xffa31a, x, 2.9, -6.0)); // cab markers
+  return merge(p);
+}
+function buildCones() {
+  const p = [];
+  for (const [x, z] of [[-0.78, 0.3], [0, -0.3], [0.78, 0.3]]) {
+    p.push(part(box(0.56, 0.07, 0.56), 0xd2560c, x, 0.035, z));
+    p.push(part(cyl(0.05, 0.25, 0.8, 8), 0xff6a00, x, 0.45, z));
+    p.push(part(cyl(0.13, 0.17, 0.14, 8), 0xf4f4f4, x, 0.5, z));
+  }
+  return merge(p);
+}
+function buildDebris() {
+  const p = [];
+  p.push(part(cyl(0.42, 0.42, 0.3, 10), 0x141416, -0.7, 0.42, 0.1, 0, 0.4, Math.PI / 2));     // tire on edge
+  p.push(part(box(0.9, 0.62, 0.72), 0x9c6b3c, 0.35, 0.31, -0.2, 0, 0.35, 0));                  // crate
+  p.push(part(box(0.92, 0.06, 0.74), 0x7a5230, 0.35, 0.63, -0.2, 0, 0.35, 0));
+  p.push(part(box(1.5, 0.08, 0.26), 0xb88a52, 0.1, 0.05, 0.55, 0, -0.5, 0));                   // board
+  p.push(part(box(0.5, 0.5, 0.5), 0xff6a00, 0.95, 0.25, 0.45, 0, 0.6, 0));                     // orange barrel-ish
+  return merge(p);
+}
+const truckGeo = buildTruck(), truckLightsGeo = buildTruckLights();
+const debrisGeos = [buildCones(), buildDebris()];
+
+function makePool(n, factory) {
+  const items = [], free = [];
+  for (let i = 0; i < n; i++) {
+    const it = factory();
+    it.root.visible = false;
+    scene.add(it.root);
+    items.push(it); free.push(it);
+  }
+  return {
+    items, free,
+    acquire() { return free.length ? free.pop() : null; },
+    release(it) { it.root.visible = false; free.push(it); },
+  };
+}
+function vehicleItem(geo, lightsGeo, withBlinkers) {
+  const root = new THREE.Group();
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, vertexColors: true, flatShading: true });
+  const body = new THREE.Mesh(geo, mat);
+  const lights = new THREE.Mesh(lightsGeo, glowMat);
+  root.add(body, lights);
+  const it = { root, body, mat, lights, blinkL: null, blinkR: null, pool: null };
+  if (withBlinkers) {
+    it.blinkL = new THREE.Mesh(blinkerGeoL, blinkerMat);
+    it.blinkR = new THREE.Mesh(blinkerGeoR, blinkerMat);
+    root.add(it.blinkL, it.blinkR);
+  }
+  return it;
+}
+const pools = {
+  sedan: makePool(30, () => vehicleItem(sedanGeo, sedanLightsGeo, true)),
+  truck: makePool(10, () => vehicleItem(truckGeo, truckLightsGeo, false)),
+  debris: makePool(14, () => {
+    const root = new THREE.Group(), body = new THREE.Mesh(debrisGeos[0], vcMat);
+    root.add(body);
+    return { root, body, mat: null, lights: null, blinkL: null, blinkR: null, pool: null };
+  }),
+};
+function poolFor(type) {
+  if (type === T.TRUCK) return pools.truck;
+  if (type === T.DEBRIS) return pools.debris;
+  if (type === T.POWERUP) return pools.power || null;
+  return pools.sedan;
+}
+function bindVisual(h) {
+  const pool = poolFor(h.type);
+  const it = pool && pool.acquire();
+  if (!it) return null;
+  it.pool = pool;
+  if (it.mat) {
+    it.mat.color.setHex(h.type === T.TAILGATER ? TAILGATER_COLOR : TRAFFIC_COLORS[h.color]);
+    if (it.mat.transparent) { it.mat.transparent = false; it.mat.opacity = 1; it.mat.needsUpdate = true; }
+  }
+  if (it.lights) it.lights.visible = true;
+  if (it.blinkL) { it.blinkL.visible = false; it.blinkR.visible = false; }
+  if (h.type === T.DEBRIS) it.body.geometry = debrisGeos[h.variant];
+  if (it.setup) it.setup(h);
+  it.root.rotation.set(0, 0, 0);
+  it.root.scale.set(1, 1, 1);
+  it.root.visible = true;
+  return it;
+}
+function releaseHazard(h) {
+  if (h.vis) { h.vis.pool.release(h.vis); h.vis = null; }
+  h.active = false;
+}
+
 function startLaneChange(dir) {
   const target = player.lane + dir;
   if (target < 0 || target >= C.lanes) { player.bump = dir; player.bumpT = 0.16; return; }
@@ -497,25 +909,81 @@ function updatePlayer(realDt) {
 }
 
 // ---------- Game state ----------
+const URL_SEED = (() => {
+  const q = new URLSearchParams(location.search).get('seed');
+  if (q === null || q === '') return null;
+  const n = parseInt(q, 10);
+  return Number.isFinite(n) ? n >>> 0 : null;
+})();
+
 const game = {
-  state: 'title',        // title | play | paused
+  state: 'title',        // title | play | crashing | over | paused
   prevState: 'title',
+  seed: 0,
+  spawner: null,
   sigma: 0,              // meters traveled this run
-  time: 0,
+  time: 0,               // game seconds (slows during slow-mo)
   score: 0,
   mph: C.startSpeedMph,
+  crashT: 0,
+  overAt: 0,
+  spin: 0, slide: 0,
+  tailWarnLane: -9,
 };
 
+function releaseAllHazards() {
+  if (!game.spawner) return;
+  for (const h of game.spawner.hazards) if (h.active) releaseHazard(h);
+}
+
 function resetRun() {
-  game.sigma = 0; game.time = 0; game.score = 0;
-  player.lane = C.startLane; player.x = player.fromX = laneX(C.startLane); player.t = 1; player.queued = 0;
+  releaseAllHazards();
+  game.seed = URL_SEED !== null ? URL_SEED : (Math.random() * 4294967296) >>> 0;
+  game.spawner = Core.createSpawner(game.seed, C.startLane);
+  game.sigma = 0; game.time = 0; game.score = 0; game.crashT = 0; game.spin = 0; game.slide = 0;
+  player.lane = C.startLane; player.x = player.fromX = laneX(C.startLane); player.t = 1; player.queued = 0; player.bumpT = 0;
+  player.group.rotation.set(0, 0, 0);
 }
 
 function startRun() {
   resetRun();
   game.state = 'play';
   ui.title.classList.add('hidden');
+  ui.over.classList.add('hidden');
   ui.hud.classList.remove('hidden');
+  hudCache.score = hudCache.miles = hudCache.mph = -1; hudCache.past = null;
+}
+
+function crash(h, hx) {
+  game.state = 'crashing';
+  game.crashT = 0;
+  h.hit = true;
+  const side = hx > player.x ? -1 : 1;              // spin away from the impact
+  game.spin = side * (7 + Math.random() * 3);
+  game.slide = side * 5;
+  player.t = 1; player.queued = 0;
+  h.bounced = true; h.bvx = -side * 6; h.bvy = 5; h.spin = -side * 4;
+}
+
+function gameOver() {
+  game.state = 'over';
+  game.overAt = performance.now();
+  const score = Math.floor(game.score);
+  const miles = game.sigma / Core.METERS_PER_MILE;
+  const isBest = score > bestScore;
+  if (isBest) { bestScore = score; store.set('pedro.best', bestScore); }
+  const roast = ROASTS[Math.floor(Math.random() * ROASTS.length)]
+    .replace(/\{miles\}/g, miles.toFixed(2)).replace(/\{score\}/g, score.toLocaleString());
+  ui.overRoast.textContent = roast;
+  ui.overScore.textContent = score.toLocaleString();
+  ui.overMiles.textContent = miles.toFixed(2) + ' mi';
+  ui.overBest.textContent = bestScore.toLocaleString();
+  ui.overNewBest.classList.toggle('hidden', !isBest);
+  ui.overSeed.textContent = 'Seed ' + game.seed + ' — replay with ?seed=' + game.seed;
+  ui.titleBest.textContent = 'Best: ' + bestScore.toLocaleString();
+  ui.tailWarn.classList.add('hidden');
+  ui.over.classList.remove('hidden');
+  game.lastRoast = roast;
 }
 
 function pause() {
@@ -536,7 +1004,9 @@ window.addEventListener('blur', pause);
 // ---------- UI ----------
 const $ = (id) => document.getElementById(id);
 const ui = {
-  hud: $('hud'), title: $('titleScreen'), pause: $('pauseScreen'),
+  hud: $('hud'), title: $('titleScreen'), pause: $('pauseScreen'), over: $('overScreen'),
+  overRoast: $('overRoast'), overScore: $('overScore'), overMiles: $('overMiles'), overBest: $('overBest'),
+  overNewBest: $('overNewBest'), overSeed: $('overSeed'), tailWarn: $('tailWarn'), tailWarnDir: $('tailWarnDir'),
   score: $('hudScoreVal'), miles: $('hudMilesVal'), milesLabel: $('hudMilesLabel'), speed: $('hudSpeedVal'),
   titleBest: $('titleBest'), debug: $('debugPanel'),
 };
@@ -557,16 +1027,22 @@ function updateHud() {
 }
 
 // ---------- Input ----------
-function onAnyStartInput() {
+function onAnyStartInput(isKey, key) {
   if (game.state === 'title') { startRun(); return true; }
   if (game.state === 'paused') { resume(); return true; }
+  if (game.state === 'over') {
+    const ready = performance.now() - game.overAt > C.restartLockSec * 1000;
+    if (ready && (!isKey || key === ' ' || key === 'Enter')) startRun();
+    return true;
+  }
+  if (game.state === 'crashing') return true;
   return false;
 }
 window.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   const k = e.key;
   if (k === 'ArrowLeft' || k === 'ArrowRight' || k === ' ' || k === 'ArrowUp' || k === 'ArrowDown') e.preventDefault();
-  if (onAnyStartInput()) return;
+  if (onAnyStartInput(true, k)) return;
   if (k === 'ArrowLeft' || k === 'a' || k === 'A') requestLane(-1);
   else if (k === 'ArrowRight' || k === 'd' || k === 'D') requestLane(1);
   else if (k === 'Escape' || k === 'p' || k === 'P') pause();
@@ -624,6 +1100,109 @@ function updateCamera(dt, speedFrac) {
   sky.position.copy(camera.position);
 }
 
+// ---------- Hazards per frame ----------
+function updateHazards(dtGame, realDt) {
+  const sp = game.spawner;
+  if (!sp) return;
+  const sig = game.sigma, hsc = C.hitboxScale;
+  const pHalfW = C.playerSize[0] * hsc / 2, pHalfL = C.playerSize[1] * hsc / 2;
+  let warnAhead = -Infinity, warnLane = -9;
+  const blinkOn = (game.time * 6) % 2 < 1;
+  const list = sp.hazards;
+  for (let i = 0; i < list.length; i++) {
+    const h = list[i];
+    if (!h.active) continue;
+    const ahead = (1 - h.k) * (h.sigma - sig);
+    if (h.type === T.TAILGATER) {
+      if (ahead > C.tailgaterExitAhead) {
+        h.fade -= realDt * 3;
+        if (h.fade <= 0) { releaseHazard(h); continue; }
+      } else if (ahead < 0 && ahead > -C.tailgaterWarnMeters && ahead > warnAhead && !h.bounced) { warnAhead = ahead; warnLane = h.lane; }
+    } else if (ahead < -C.despawnBehindMeters) { releaseHazard(h); continue; }
+
+    let x = laneX(h.lane), yaw = 0, blinking = false;
+    if (h.type === T.CHANGER) {
+      const p = Core.clamp01((sig - h.moveStart) / (h.moveEnd - h.moveStart));
+      x = lerp(laneX(h.lane), laneX(h.lane2), easeInOut(p));
+      blinking = sig >= h.blinkStart && p < 1;
+      if (p > 0 && p < 1) yaw = -Math.sign(h.lane2 - h.lane) * 0.14 * Math.sin(p * Math.PI);
+    }
+    if (h.bounced) {
+      h.bx += h.bvx * dtGame; h.by += h.bvy * dtGame; h.bvy -= 22 * dtGame;
+      if (h.by < 0) { h.by = 0; h.bvy = h.bvy < -2 ? -h.bvy * 0.3 : 0; h.bvx *= 0.6; }
+      h.ry += h.spin * dtGame;
+      x += h.bx;
+    }
+    const z = -ahead;
+
+    if (!h.vis && ahead > -25) h.vis = bindVisual(h);
+    if (h.vis) {
+      const r = h.vis.root;
+      r.position.set(x, h.bounced ? h.by : 0, z);
+      r.rotation.y = h.bounced ? h.ry : yaw;
+      if (h.vis.blinkL) {
+        const on = blinking && blinkOn, right = h.lane2 > h.lane;
+        h.vis.blinkL.visible = on && !right;
+        h.vis.blinkR.visible = on && right;
+      }
+      if (h.type === T.TAILGATER && h.fade < 1 && h.vis.mat) {
+        if (!h.vis.mat.transparent) { h.vis.mat.transparent = true; h.vis.mat.needsUpdate = true; h.vis.lights.visible = false; }
+        h.vis.mat.opacity = Math.max(0, h.fade);
+      }
+      if (h.vis.update) h.vis.update(h, realDt);
+    }
+
+    if (game.state === 'play' && !h.hit && !h.bounced &&
+        Math.abs(z) < pHalfL + h.l * hsc / 2 && Math.abs(x - player.x) < pHalfW + h.w * hsc / 2) {
+      onHit(h, x);
+    }
+  }
+  game.tailWarnLane = warnLane;
+}
+
+function onHit(h, hx) {
+  crash(h, hx);
+}
+
+let tailText = null;
+function updateTailWarn() {
+  const lane = game.state === 'play' ? game.tailWarnLane : -9;
+  const text = lane < 0 ? '' : lane < player.lane ? '◀ LEFT' : lane > player.lane ? 'RIGHT ▶' : '▼ YOUR LANE';
+  if (text === tailText) return;
+  tailText = text;
+  ui.tailWarn.classList.toggle('hidden', text === '');
+  ui.tailWarnDir.textContent = text;
+}
+
+// ---------- Debug overlay: guaranteed-open lane per row ----------
+const debugStrips = [];
+if (DEBUG) {
+  const m = new THREE.MeshBasicMaterial({ color: 0x33ff77, transparent: true, opacity: 0.38, depthWrite: false, fog: false });
+  for (let i = 0; i < 14; i++) {
+    const s = new THREE.Mesh(new THREE.PlaneGeometry(C.laneWidth * 0.86, 1).rotateX(-Math.PI / 2), m);
+    s.visible = false; s.renderOrder = 2;
+    scene.add(s); debugStrips.push(s);
+  }
+}
+function updateDebugStrips() {
+  const sp = game.spawner;
+  let n = 0;
+  if (sp && game.state !== 'title') {
+    const kk = 1 - C.trafficSpeedFrac;
+    for (const row of sp.rows) {
+      if (row.index < 0 || n >= debugStrips.length) continue;
+      const zA = -kk * (row.A - game.sigma), zB = -kk * (row.B - game.sigma);
+      if (zA < -C.fogFar - 30 || zB > C.despawnBehindMeters) continue;
+      const len = Math.max(1.5, zA - zB);
+      const s = debugStrips[n++];
+      s.visible = true;
+      s.position.set(laneX(row.g), 0.05, (zA + zB) / 2);
+      s.scale.set(1, 1, len);
+    }
+  }
+  for (; n < debugStrips.length; n++) debugStrips[n].visible = false;
+}
+
 // ---------- Main loop ----------
 let lastFrame = performance.now();
 let fpsAcc = 0, fpsFrames = 0, fps = 0;
@@ -642,16 +1221,32 @@ function frame(now) {
 function update(realDt) {
   if (game.state === 'paused') return;
   const miles = game.sigma / Core.METERS_PER_MILE;
-  if (game.state === 'play') {
-    const dt = realDt;
+  if (game.state === 'play' || game.state === 'crashing') {
+    const crashing = game.state === 'crashing';
+    const dtGame = crashing ? realDt * C.crashSlowmo : realDt;
     game.mph = Core.speedMph(miles);
-    const v = game.mph * Core.MPH_TO_MPS;
-    const d = v * dt;
+    let v = game.mph * Core.MPH_TO_MPS;
+    if (crashing) v *= Math.max(0, 1 - game.crashT / 0.5);
+    const d = v * dtGame;
     game.sigma += d;
-    game.time += dt;
+    game.time += dtGame;
     scrollRoad(d);
-    updatePlayer(realDt);
+    if (!crashing) {
+      game.spawner.ensure(game.sigma);
+      game.score += d * (game.mph / C.startSpeedMph);
+      updatePlayer(realDt);
+    } else {
+      player.group.rotation.y += game.spin * dtGame * 2.2;
+      player.x += game.slide * dtGame;
+      game.slide *= 0.98;
+      player.group.position.x = player.x;
+    }
+    updateHazards(dtGame, realDt);
+    if (crashing) { game.crashT += realDt; if (game.crashT >= C.crashSec) gameOver(); }
     updateHud();
+    updateTailWarn();
+  } else if (game.state === 'over') {
+    // frozen wreck behind the game-over screen
   } else {
     // Title: idle cruise
     game.time += realDt;
@@ -659,23 +1254,34 @@ function update(realDt) {
     updatePlayer(realDt);
   }
   const speedFrac = (game.mph - C.startSpeedMph) / (C.maxSpeedMph - C.startSpeedMph);
-  updateCamera(realDt, game.state === 'play' ? speedFrac : 0);
-  if (DEBUG) updateDebug(miles);
+  updateCamera(realDt, game.state === 'play' || game.state === 'crashing' ? speedFrac : 0);
+  if (DEBUG) { updateDebugStrips(); updateDebug(miles); }
 }
 
+let debugTick = 0;
 function updateDebug(miles) {
+  if ((debugTick = (debugTick + 1) % 10) !== 0) return;   // ~6 Hz text refresh
+  const sp = game.spawner;
+  let next = '';
+  if (sp) for (const row of sp.rows) {
+    if (row.index >= 0 && row.B > game.sigma && (next === '' || row.index < next.i)) next = { i: row.index, g: row.g, b: row.budget, f: row.fallback };
+  }
   ui.debug.textContent =
-    `fps ${fps.toFixed(0)}  state ${game.state}\n` +
-    `miles ${miles.toFixed(3)}  diff ${Core.difficulty(miles).toFixed(2)}\n` +
-    `mph ${game.mph.toFixed(1)}  lane ${player.lane}`;
+    `fps ${fps.toFixed(0)}  state ${game.state}  seed ${game.seed}\n` +
+    `miles ${miles.toFixed(3)}  diff ${Core.difficulty(miles).toFixed(2)}  mph ${game.mph.toFixed(1)}\n` +
+    `lane ${player.lane}  rows ${sp ? sp.rowCount : 0}  retries ${sp ? sp.retries : 0}  fallbacks ${sp ? sp.fallbacks : 0}\n` +
+    (next ? `next row #${next.i}: open lane ${next.g} (reach ${next.b})${next.f ? ' FALLBACK' : ''}` : '');
 }
 
 // ---------- Test hook (read-only snapshot + render probe) ----------
 window.__pedro = {
   ready: true,
   snapshot() {
+    let live = 0;
+    if (game.spawner) for (const h of game.spawner.hazards) if (h.active) live++;
     return { state: game.state, lane: player.lane, x: player.x, tweening: player.t < 1, mph: game.mph,
-      miles: game.sigma / Core.METERS_PER_MILE, score: game.score };
+      miles: game.sigma / Core.METERS_PER_MILE, score: game.score, seed: game.seed, liveHazards: live,
+      rows: game.spawner ? game.spawner.rowCount : 0, roast: game.lastRoast || '' };
   },
   renderProbe() {
     renderer.render(scene, camera);

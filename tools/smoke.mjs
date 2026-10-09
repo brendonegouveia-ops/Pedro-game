@@ -118,6 +118,30 @@ probe.opaque > 60 && probe.distinctColors > 8
 s = await snap();
 s.mph > 70 && s.miles > 0 ? ok(`speed rising: ${s.mph.toFixed(1)} mph at ${s.miles.toFixed(3)} mi`) : fail('no forward progress');
 
+// --- Traffic spawns, collision ends the run, game over, restart ---
+{
+  let t = Date.now(), sawTraffic = false;
+  while (Date.now() - t < 8000) { s = await snap(); if (s.liveHazards > 0) { sawTraffic = true; break; } await sleep(200); }
+  sawTraffic ? ok(`traffic spawning (${s.liveHazards} live hazards, ${s.rows} rows)`) : fail('no traffic spawned');
+  await sleep(1200);
+  await page.screenshot({ path: path.join(outDir, '3-traffic.png') });
+  // Sit still in one lane: traffic must eventually hit us.
+  t = Date.now();
+  let sawCrashing = false;
+  while (Date.now() - t < 90000) { s = await snap(); if (s.state === 'crashing') sawCrashing = true; if (s.state === 'over') break; await sleep(40); }
+  s.state === 'over' ? ok(`collision -> crash -> game over at ${s.miles.toFixed(2)} mi, score ${Math.floor(s.score)}`) : fail('never crashed (state ' + s.state + ')');
+  sawCrashing ? ok('slow-mo spin-out state observed before game over') : fail('no crashing state observed');
+  await tap(W / 2, H / 2); await sleep(60);
+  s = await snap();
+  s.state === 'over' ? ok('restart ignored during lockout') : fail('restart lockout missing');
+  s.roast && !s.roast.includes('{') ? ok(`roast line: "${s.roast}"`) : fail('bad roast line: ' + s.roast);
+  await page.screenshot({ path: path.join(outDir, '4-gameover.png') });
+  await sleep(700);
+  await page.keyboard.press(' '); await sleep(250);
+  s = await snap();
+  s.state === 'play' && s.miles < 0.05 && s.seed === 12345 ? ok('Space restarts instantly with the same ?seed') : fail('restart failed: ' + JSON.stringify(s));
+}
+
 // --- Extra checks registered by later increments ---
 const extra = await page.evaluate(() => (window.__pedro.selfTest ? window.__pedro.selfTest() : []));
 for (const r of extra) (r.pass ? ok : fail)(r.name + (r.detail ? ' — ' + r.detail : ''));
