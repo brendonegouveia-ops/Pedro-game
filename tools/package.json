@@ -1,0 +1,15 @@
+{
+  "name": "pedro-game-tools",
+  "private": true,
+  "type": "module",
+  "description": "Headless verification for index.html (not part of the game).",
+  "scripts": {
+    "smoke": "node smoke.mjs",
+    "fairness": "node fairness.mjs",
+    "test": "node fairness.mjs && node smoke.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1",
+    "three": "0.169.0"
+  }
+}
