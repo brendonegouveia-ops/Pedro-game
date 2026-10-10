@@ -154,7 +154,7 @@ s.mph > 70 && s.miles > 0 ? ok(`speed rising: ${s.mph.toFixed(1)} mph at ${s.mil
   s.state === 'over' ? ok(`third hit -> crash -> game over at ${s.miles.toFixed(2)} mi, score ${Math.floor(s.score)}`) : fail('never crashed (state ' + s.state + ')');
   s.damage === 3 && s.livesShown === 0 ? ok('wreck shows final damage stage, no links left') : fail(`final damage ${s.damage}, shown ${s.livesShown}`);
   sawCrashing ? ok('slow-mo spin-out state observed before game over') : fail('no crashing state observed');
-  await tap(W / 2, H / 2); await sleep(60);
+  await tap(W / 2, H * 0.1); await sleep(60);   // top of the screen, away from the name field
   s = await snap();
   s.state === 'over' ? ok('restart ignored during lockout') : fail('restart lockout missing');
   s.roast && !s.roast.includes('{') ? ok(`roast line: "${s.roast}"`) : fail('bad roast line: ' + s.roast);
@@ -382,7 +382,7 @@ async function kamikaze(pg) {
   await pm.goto(pathToFileURL(path.join(root, 'index.html')).href + '?seed=5');
   await pm.waitForFunction(() => window.__pedro && window.__pedro.ready);
   const cdp2 = await context.newCDPSession(pm);
-  await cdp2.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 200, y: 400 }] });
+  await cdp2.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 200, y: 110 }] });
   await cdp2.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await sleep(400);
   let a = await pm.evaluate(() => window.__pedro.snapshot());
@@ -435,6 +435,100 @@ async function kamikaze(pg) {
   /Copied/.test(toastText) ? ok('copy confirmation toast shown') : fail('toast: ' + toastText);
   await pd.screenshot({ path: path.join(outDir, '9-desktop-gameover.png') });
   await dctx.close();
+}
+
+// --- Leaderboard: local (no config) and shared (Supabase REST, mocked) ---
+async function endRunQuickly(pg) {
+  await pg.keyboard.press('Enter');
+  await kamikaze(pg);
+  await pg.waitForFunction(() => window.__pedro.snapshot().state === 'over', null, { timeout: 180000 });
+  await sleep(800);
+}
+{
+  // Local board
+  const lctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await lctx.route(cdnUrl, (route) => route.fulfill({ status: 200, body: localThree, headers: { 'Content-Type': 'application/javascript', 'Access-Control-Allow-Origin': '*' } }));
+  const pl = await lctx.newPage();
+  const errs = [];
+  pl.on('pageerror', (e) => errs.push(e.message));
+  await pl.goto(pathToFileURL(path.join(root, 'index.html')).href + '?seed=7');
+  await pl.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  await endRunQuickly(pl);
+  const visible = await pl.isVisible('#lbName');
+  visible ? ok('game over offers "Add to board" with a name field') : fail('no leaderboard form on game over');
+  await pl.click('#lbName');
+  await pl.keyboard.type('Ad M ');          // a/d/m/space must type, not steer / mute / restart
+  let st = await pl.evaluate(() => window.__pedro.snapshot());
+  const typed = await pl.inputValue('#lbName');
+  st.state === 'over' && !st.muted && typed === 'Ad M ' ? ok('typing in the name field never restarts, steers or mutes') : fail(`typing leaked: state ${st.state}, muted ${st.muted}, value "${typed}"`);
+  await pl.fill('#lbName', '  Pedro <b>G</b>  ');
+  await pl.click('#lbSubmit');
+  await pl.waitForSelector('#boardList li.me', { timeout: 10000 }).catch(() => {});
+  const row = await pl.evaluate(() => { const r = document.querySelector('#boardList li.me'); return r ? r.innerText.replace(/\s+/g, ' ') : null; });
+  const src = await pl.textContent('#boardSrc');
+  row && row.includes('Pedro bG/b') && !row.includes('<') && /THIS DEVICE/.test(src)
+    ? ok(`local board shows the new entry highlighted ("${row.trim()}", ${src.trim()}), name sanitized`) : fail(`local board row: ${row}, src ${src}`);
+  await pl.screenshot({ path: path.join(outDir, '13-leaderboard-local.png') });
+  await pl.keyboard.press('Escape');
+  st = await pl.evaluate(() => window.__pedro.snapshot());
+  const closed = await pl.isHidden('#boardScreen');
+  closed && st.state === 'over' ? ok('Escape closes the board without restarting') : fail('board close: ' + JSON.stringify({ closed, s: st.state }));
+  await pl.reload();
+  await pl.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  await pl.click('#titleLbBtn');
+  await pl.waitForFunction(() => document.querySelectorAll('#boardList li:not(.empty)').length > 0, null, { timeout: 5000 }).catch(() => {});
+  const persisted = await pl.evaluate(() => document.getElementById('boardList').innerText);
+  st = await pl.evaluate(() => window.__pedro.snapshot());
+  /Pedro/.test(persisted) && st.state === 'title' ? ok('board persists across reloads and opens from the title screen without starting a run') : fail('persist: ' + persisted + ' / ' + st.state);
+  await pl.click('#boardClose');
+  await endRunQuickly(pl);
+  const remembered = await pl.inputValue('#lbName');
+  remembered === 'Pedro bGb' || remembered.startsWith('Pedro') ? ok(`name remembered for next time ("${remembered}")`) : fail('name not remembered: ' + remembered);
+  if (errs.length) fail('leaderboard page errors: ' + errs.join(' | '));
+  await lctx.close();
+}
+{
+  // Shared board: Supabase REST mocked in-memory; verifies the exact requests the game sends
+  const SB = 'https://test-project.supabase.co', KEY = 'sb_publishable_TESTKEY';
+  const db = [{ name: 'Vovó', score: 99999, miles: 12.5, created_at: '2026-01-01T00:00:00Z' }];
+  const seen = { get: 0, post: 0, problems: [] };
+  const sctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await sctx.route(cdnUrl, (route) => route.fulfill({ status: 200, body: localThree, headers: { 'Content-Type': 'application/javascript', 'Access-Control-Allow-Origin': '*' } }));
+  await sctx.route(SB + '/rest/v1/scores**', async (route) => {
+    const req = route.request(), h = req.headers(), cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS' };
+    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    if (h.apikey !== KEY) seen.problems.push('missing apikey');
+    if (h.authorization) seen.problems.push('publishable key must not be sent as Bearer');
+    if (req.method() === 'GET') {
+      seen.get++;
+      const u = new URL(req.url());
+      if (u.searchParams.get('order') !== 'score.desc,created_at.asc' || u.searchParams.get('limit') !== '10') seen.problems.push('bad query ' + u.search);
+      const rows = [...db].sort((a, b) => b.score - a.score).slice(0, 10);
+      return route.fulfill({ status: 200, headers: { ...cors, 'Content-Type': 'application/json' }, body: JSON.stringify(rows) });
+    }
+    if (req.method() === 'POST') {
+      seen.post++;
+      const body = JSON.parse(req.postData() || '{}');
+      if (h['content-type'] !== 'application/json' || h.prefer !== 'return=minimal') seen.problems.push('bad POST headers');
+      if (Object.keys(body).sort().join() !== 'miles,name,score' || typeof body.score !== 'number') seen.problems.push('bad body ' + JSON.stringify(body));
+      db.push({ ...body, created_at: new Date().toISOString() });
+      return route.fulfill({ status: 201, headers: cors, body: '' });
+    }
+    route.fulfill({ status: 405, headers: cors });
+  });
+  const ps2 = await sctx.newPage();
+  await ps2.goto(pathToFileURL(path.join(root, 'index.html')).href + `?debug&seed=7&lbUrl=${encodeURIComponent(SB)}&lbKey=${KEY}`);
+  await ps2.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  await endRunQuickly(ps2);
+  await ps2.fill('#lbName', 'Pedro');
+  await ps2.click('#lbSubmit');
+  await ps2.waitForSelector('#boardList li.me', { timeout: 10000 }).catch(() => {});
+  const txt = await ps2.evaluate(() => document.querySelector('.board').innerText.replace(/\s+/g, ' '));
+  await ps2.screenshot({ path: path.join(outDir, '14-leaderboard-shared.png') });
+  seen.post === 1 && seen.get >= 1 && !seen.problems.length && /EVERYONE/.test(txt) && /Vovó/.test(txt) && /Pedro/.test(txt)
+    ? ok(`shared board: POST + GET to Supabase REST with correct headers/query/body; shows everyone's scores ("${txt.slice(0, 80)}…")`)
+    : fail('shared board: ' + JSON.stringify({ seen, txt }));
+  await sctx.close();
 }
 
 // --- Mile sign renders near a mile marker ---

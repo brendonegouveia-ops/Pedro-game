@@ -192,6 +192,36 @@
   #musicBtn.off .slash { display: block; }
   #musicBtn .slash { display: none; }
 
+  .lb { pointer-events: auto; width: min(420px, 100%); margin-bottom: 12px; }
+  .lbRow { display: flex; gap: 8px; }
+  .lb input {
+    flex: 1; min-width: 0; font: inherit; font-size: 17px; font-weight: 700; padding: 10px 14px; border-radius: 12px;
+    border: 2px solid rgba(255,255,255,0.45); background: rgba(10,12,22,0.75); color: #fff; outline: none;
+    -webkit-user-select: text; user-select: text; touch-action: manipulation;
+  }
+  .lb input:focus { border-color: #ffd166; }
+  .lb button, .lbBtn {
+    font: inherit; font-weight: 900; font-size: 15px; border: 0; border-radius: 12px; padding: 10px 14px; cursor: pointer;
+    background: #ffd166; color: #1a1030; pointer-events: auto; white-space: nowrap;
+  }
+  .lb button:disabled { opacity: 0.5; }
+  .lbMsg { min-height: 18px; margin-top: 6px; font-size: 13px; font-weight: 700; color: #ffe1a8; }
+  .lbBtn { background: rgba(255,255,255,0.14); color: #fff; border: 2px solid rgba(255,255,255,0.5); border-radius: 999px; padding: 10px 18px; }
+  #titleLbBtn { margin-top: 14px; }
+  #boardScreen { z-index: 40; pointer-events: auto; background: rgba(8,10,20,0.9); }
+  .board { width: min(420px, 100%); background: rgba(20,24,40,0.95); border: 2px solid rgba(255,255,255,0.2); border-radius: 18px; padding: 14px 14px 12px; }
+  .board h2 { margin: 0 0 2px; font-size: 26px; font-weight: 900; text-transform: uppercase; color: #ffd166; }
+  .board .src { font-size: 11px; letter-spacing: 0.1em; opacity: 0.6; margin-bottom: 10px; }
+  .board ol { list-style: none; margin: 0 0 12px; padding: 0; text-align: left; font-variant-numeric: tabular-nums; }
+  .board li { display: grid; grid-template-columns: 30px 1fr auto; gap: 8px; align-items: baseline; padding: 7px 8px; border-radius: 10px; }
+  .board li:nth-child(odd) { background: rgba(255,255,255,0.05); }
+  .board li.me { background: rgba(255,209,102,0.25); outline: 2px solid #ffd166; }
+  .board li b { font-weight: 900; color: #ffd166; }
+  .board li span { font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .board li em { font-style: normal; font-weight: 900; text-align: right; }
+  .board li small { display: block; font-size: 11px; opacity: 0.6; font-weight: 700; }
+  .board .empty { opacity: 0.7; padding: 16px 0; display: block; text-align: center; }
+
   #debugPanel {
     position: fixed; left: 8px; bottom: calc(env(safe-area-inset-bottom) + 64px);
     background: rgba(0,0,0,0.65); color: #7CFF9B; font: 11px/1.35 ui-monospace, Menlo, monospace;
@@ -235,6 +265,7 @@
   <p class="sub">10 miles to game night. Three chouriço links of life. One brand-new silver Jetta. Same driver.</p>
   <div class="cta">Tap / press any key to drive</div>
   <div class="best" id="titleBest">Best: 0</div>
+  <button class="lbBtn" id="titleLbBtn" type="button">🏆 Leaderboard</button>
   <div class="hint">Swipe or tap left / right to change lanes<br>Keyboard: ← → or A / D · P pause · M mute · N music</div>
 </div>
 
@@ -252,7 +283,14 @@
     <div class="stat"><small>DISTANCE</small><b id="overMiles">0.00 mi</b></div>
     <div class="stat"><small>BEST</small><b id="overBest">0</b></div>
   </div>
-  <div class="btnRow"><button class="shareBtn" id="shareBtn" type="button">Share</button></div>
+  <div class="lb" id="lbForm">
+    <div class="lbRow">
+      <input id="lbName" type="text" maxlength="16" placeholder="Your name" autocomplete="nickname" autocapitalize="words" enterkeyhint="send" aria-label="Your name for the leaderboard">
+      <button id="lbSubmit" type="button">Add to board</button>
+    </div>
+    <div class="lbMsg" id="lbMsg"></div>
+  </div>
+  <div class="btnRow"><button class="shareBtn" id="shareBtn" type="button">Share</button><button class="lbBtn" id="overLbBtn" type="button">🏆 Board</button></div>
   <div class="cta">Tap / Space to drive again</div>
   <div class="seedline" id="overSeed"></div>
 </div>
@@ -273,6 +311,15 @@
   <svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M17 9l5 6M22 9l-5 6"/></svg>
 </button>
 <div id="toast" class="hidden"></div>
+
+<div id="boardScreen" class="layer screen hidden">
+  <div class="board">
+    <h2>🏆 Leaderboard</h2>
+    <div class="src" id="boardSrc"></div>
+    <ol id="boardList"></ol>
+    <button class="lbBtn" id="boardClose" type="button">Close</button>
+  </div>
+</div>
 
 <div id="debugPanel" class="hidden"></div>
 
@@ -392,9 +439,15 @@ const CONFIG = {
 
   // --- Sharing / audio ---
   shareUrl: 'https://brendonegouveia-ops.github.io/pedro-game/',
+
+  // --- Leaderboard ---
+  // Shared online board via Supabase (see README). Leave both empty for a this-device-only board.
+  leaderboardUrl: '',          // e.g. 'https://abcdefgh.supabase.co'
+  leaderboardKey: '',          // the project's public anon / publishable key (safe to publish; RLS protects the table)
+  leaderboardSize: 10,         // rows shown
   masterVolume: 0.7,
   musicVolume: 0.22,           // background music level (relative to master)
-  musicBpm: 132,               // dotted-quarter beats per minute of the folk loop
+  musicBpm: 126,               // quarter-note beats per minute of the corridinho loop (2/4)
 };
 
 // Game-over roast lines. {miles} and {score} are substituted.
@@ -1372,22 +1425,37 @@ function updatePlayer(realDt) {
 }
 
 // ---------- Audio: WebAudio synthesis only (unlocked by the first tap/key, iOS requirement) ----------
-// Original folk loop in the style of a Portuguese "vira" (6/8, accordion + oom-pah bass + tambourine).
-// Each bar = 6 eighth notes. Melody entries are [midi, eighths]; chords per bar.
+// Original tune in the style of a Portuguese corridinho / pimba accordion dance:
+// 2/4 time, sixteenth-note runs, A harmonic minor (that G#) → relative C major, accordion melody
+// doubled in parallel thirds, oom-pah bass + left-hand chords, ferrinhos (folk triangle) on the offbeats.
+// Each bar = 8 sixteenths. Melody entries are [midi, sixteenths].
 const MUSIC = {
   melody: [
-    [[74,1],[71,1],[74,1],[79,1],[78,1],[79,1]], [[81,1],[79,1],[78,1],[76,1],[74,1],[72,1]],
-    [[69,1],[72,1],[74,1],[78,1],[76,1],[78,1]], [[79,2],[74,1],[71,3]],
-    [[71,1],[72,1],[74,1],[76,1],[74,1],[72,1]], [[76,1],[74,1],[72,1],[76,1],[79,1],[76,1]],
-    [[74,1],[72,1],[71,1],[69,1],[71,1],[72,1]], [[71,2],[69,1],[67,3]],
-    [[76,1],[79,1],[84,1],[83,1],[81,1],[79,1]], [[83,1],[81,1],[79,1],[74,1],[79,1],[83,1]],
-    [[81,1],[78,1],[81,1],[84,1],[83,1],[81,1]], [[83,2],[79,1],[74,3]],
-    [[76,1],[78,1],[79,1],[81,1],[79,1],[76,1]], [[74,1],[79,1],[83,1],[86,1],[83,1],[79,1]],
-    [[81,1],[84,1],[83,1],[81,1],[78,1],[81,1]], [[79,3],[67,3]],
+    [[76,2],[81,2],[84,2],[83,1],[81,1]],                 // Am
+    [[80,1],[81,1],[83,2],[81,2],[76,2]],                 // Am
+    [[74,1],[76,1],[77,1],[80,1],[83,2],[80,2]],          // E7
+    [[81,1],[80,1],[77,1],[76,1],[74,2],[71,2]],          // E7
+    [[71,1],[74,1],[77,1],[80,1],[83,1],[81,1],[80,1],[77,1]], // E7
+    [[76,2],[74,1],[72,1],[71,2],[68,2]],                 // E7
+    [[69,1],[71,1],[72,1],[76,1],[81,2],[84,2]],          // Am
+    [[83,1],[84,1],[83,1],[80,1],[81,4]],                 // Am
+    [[79,2],[76,1],[79,1],[84,2],[79,2]],                 // C
+    [[88,1],[86,1],[84,1],[83,1],[84,2],[79,2]],          // C
+    [[77,1],[79,1],[81,1],[83,1],[86,2],[83,2]],          // G7
+    [[84,1],[83,1],[81,1],[79,1],[77,2],[74,2]],          // G7
+    [[76,1],[79,1],[84,1],[88,1],[86,1],[84,1],[83,1],[81,1]], // C
+    [[77,2],[81,2],[86,2],[81,2]],                        // Dm
+    [[80,1],[81,1],[83,1],[86,1],[84,1],[83,1],[81,1],[80,1]], // E7
+    [[81,4],[76,2],[69,2]],                               // Am
   ],
-  chords: ['G','D','D','G','G','C','D','G','C','G','D','G','C','G','D','G'],
-  // [bass root, bass fifth, chord tones]
-  harmony: { G: [43, 50, [55, 59, 62]], D: [38, 45, [54, 57, 60]], C: [36, 43, [52, 55, 60]] },
+  chords: ['Am','Am','E7','E7','E7','E7','Am','Am','C','C','G7','G7','C','Dm','E7','Am'],
+  // scale used for the parallel-thirds harmony, per bar ('m' = A harmonic minor, 'M' = C major)
+  scales: 'mmmmmmmmMMMMMMmm',
+  // [bass root, bass fifth, left-hand chord tones]
+  harmony: {
+    Am: [45, 52, [57, 60, 64]], E7: [40, 47, [56, 59, 62]], C: [36, 43, [55, 60, 64]],
+    G7: [43, 50, [53, 55, 59]], Dm: [38, 45, [57, 62, 65]],
+  },
 };
 
 const Sfx = (() => {
@@ -1395,9 +1463,22 @@ const Sfx = (() => {
   let muted = store.get('pedro.muted', '0') === '1';
   let musicOn = store.get('pedro.music', '1') === '1';
   let musicGain = null, musicTimer = 0, step = 0, nextTime = 0, rate = 1, notes = 0, paused = false;
-  const STEPS = MUSIC.melody.length * 6;
-  const melodyAt = new Array(STEPS).fill(null);
-  { let i = 0; for (const bar of MUSIC.melody) for (const n of bar) { melodyAt[i] = n; i += n[1]; } }
+  const STEPS = MUSIC.melody.length * 8;
+  const melodyAt = new Array(STEPS).fill(null), thirdAt = new Array(STEPS).fill(0);
+  {
+    const SCALE = { m: [9, 11, 0, 2, 4, 5, 8], M: [0, 2, 4, 5, 7, 9, 11] };   // pitch classes
+    let i = 0;
+    MUSIC.melody.forEach((bar, b) => {
+      const sc = SCALE[MUSIC.scales[b]];
+      for (const n of bar) {
+        melodyAt[i] = n;
+        // diatonic third below: two scale steps down
+        const pc = n[0] % 12, k = sc.indexOf(pc);
+        if (k >= 0) { const below = sc[(k + 5) % 7]; let m = n[0] - ((pc - below + 12) % 12 || 12); thirdAt[i] = m; }
+        i += n[1];
+      }
+    });
+  }
   const hz = (m) => 440 * Math.pow(2, (m - 69) / 12);
   function init() {
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -1428,54 +1509,79 @@ const Sfx = (() => {
     musicTimer = setInterval(scheduleMusic, 40);
   }
   // ---- music voices ----
-  function accordion(t, m, dur) {
-    const f = hz(m), g = ctx.createGain(), lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass'; lp.frequency.value = 2600; lp.Q.value = 0.7;
+  // Accordion: three reeds tuned "wet" (±14 cents → the shimmering musette beat) + a low bassoon reed.
+  function accordion(t, m, dur, level) {
+    const f = hz(m), g = ctx.createGain(), lp = ctx.createBiquadFilter(), hp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 3200; lp.Q.value = 0.9;
+    hp.type = 'highpass'; hp.frequency.value = 180;
+    const peak = 0.11 * level;
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.16, t + 0.025);
-    g.gain.setValueAtTime(0.16, t + Math.max(0.03, dur - 0.05));
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    for (const [type, mul, lvl] of [['sawtooth', 1, 1], ['sawtooth', 1.0045, 0.8], ['square', 0.5, 0.35]]) {
+    g.gain.exponentialRampToValueAtTime(peak, t + 0.03);                  // bellows push
+    g.gain.setValueAtTime(peak, t + Math.max(0.035, dur - 0.04));
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.03);
+    for (const [type, cents, lvl] of [['sawtooth', 0, 1], ['sawtooth', 14, 0.75], ['sawtooth', -14, 0.75], ['square', -1200, 0.3]]) {
       const o = ctx.createOscillator(), og = ctx.createGain();
-      o.type = type; o.frequency.value = f * mul; og.gain.value = lvl;
-      o.connect(og); og.connect(lp); o.start(t); o.stop(t + dur + 0.02);
+      o.type = type; o.frequency.value = f; o.detune.value = cents; og.gain.value = lvl;
+      o.connect(og); og.connect(lp); o.start(t); o.stop(t + dur + 0.05);
+    }
+    lp.connect(hp); hp.connect(g); g.connect(musicGain);
+  }
+  // Left-hand buttons: bass note or short chord stab, reedy but darker
+  function leftHand(t, notes, dur, peak, cutoff) {
+    const g = ctx.createGain(), lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = cutoff;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(peak, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    for (const m of notes) {
+      const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = hz(m);
+      o.connect(lp); o.start(t); o.stop(t + dur + 0.02);
     }
     lp.connect(g); g.connect(musicGain);
   }
-  function pluck(t, m, dur, type, peak) {
-    const o = ctx.createOscillator(), g = ctx.createGain();
-    o.type = type; o.frequency.value = hz(m);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(peak, t + 0.006);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g); g.connect(musicGain); o.start(t); o.stop(t + dur + 0.02);
+  // Ferrinhos (folk triangle): two inharmonic sine partials, quick ring
+  function ferrinhos(t, peak) {
+    for (const [fq, lvl] of [[4200, 1], [6150, 0.6]]) {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = fq;
+      g.gain.setValueAtTime(peak * lvl, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+      o.connect(g); g.connect(musicGain); o.start(t); o.stop(t + 0.24);
+    }
   }
-  function tamb(t, peak) {
-    const src = ctx.createBufferSource(), hp = ctx.createBiquadFilter(), g = ctx.createGain();
-    src.buffer = noise; hp.type = 'highpass'; hp.frequency.value = 6500;
-    g.gain.setValueAtTime(peak, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
-    src.connect(hp); hp.connect(g); g.connect(musicGain);
-    src.start(t, Math.random() * 0.8); src.stop(t + 0.09);
+  // Bombo (bass drum) on the downbeats
+  function bombo(t, peak) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'sine'; o.frequency.setValueAtTime(95, t); o.frequency.exponentialRampToValueAtTime(42, t + 0.14);
+    g.gain.setValueAtTime(peak, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    o.connect(g); g.connect(musicGain); o.start(t); o.stop(t + 0.2);
   }
   function scheduleMusic() {
     if (!ctx || ctx.state !== 'running') return;
     if (nextTime < ctx.currentTime - 0.25) nextTime = ctx.currentTime + 0.05;   // resumed after a stall
     const playing = musicOn && !muted && !paused;
     while (nextTime < ctx.currentTime + 0.14) {
-      const eighth = 60 / (C.musicBpm * 3) / rate;
+      const six = 60 / (C.musicBpm * 4) / rate;          // one sixteenth note
       if (playing) {
-        const bar = Math.floor(step / 6), beat = step % 6, h = MUSIC.harmony[MUSIC.chords[bar]];
+        const bar = Math.floor(step / 8), pos = step % 8, h = MUSIC.harmony[MUSIC.chords[bar]];
         const mel = melodyAt[step];
-        if (mel) { accordion(nextTime, mel[0], mel[1] * eighth * 0.95); notes++; }
-        if (beat === 0 || beat === 3) {
-          pluck(nextTime, beat === 0 ? h[0] : h[1], eighth * 1.6, 'triangle', 0.32);
-          tamb(nextTime, 0.16);
-        } else {
-          for (const n of h[2]) pluck(nextTime, n, eighth * 0.7, 'square', 0.035);
-          tamb(nextTime, 0.06);
+        if (mel) {
+          const dur = mel[1] * six * 0.92;
+          accordion(nextTime, mel[0], dur, 1);
+          if (thirdAt[step]) accordion(nextTime, thirdAt[step], dur, 0.55);   // parallel thirds
+          notes++;
+        }
+        // 2/4 oom-pah: bass on the beats, chord on the "and"s
+        if (pos === 0 || pos === 4) {
+          leftHand(nextTime, [pos === 0 ? h[0] : h[1]], six * 1.8, 0.2, 700);
+          bombo(nextTime, pos === 0 ? 0.3 : 0.18);
+        } else if (pos === 2 || pos === 6) {
+          leftHand(nextTime, h[2], six * 1.3, 0.05, 1600);
+          ferrinhos(nextTime, 0.045);
+        } else if (pos === 7) {
+          ferrinhos(nextTime, 0.02);
         }
       }
-      nextTime += eighth;
+      nextTime += six;
       step = (step + 1) % STEPS;
     }
   }
@@ -1767,6 +1873,12 @@ function gameOver() {
   hideSpeech();
   ui.over.classList.remove('hidden');
   game.lastRoast = roast;
+  game.finalScore = score; game.finalMiles = miles;
+  lastSubmitted = null;
+  ui.lbForm.classList.toggle('hidden', score <= 0);
+  ui.lbSubmit.disabled = false; ui.lbName.disabled = false;
+  ui.lbName.value = store.get('pedro.name', '');
+  ui.lbMsg.textContent = Board.shared ? 'Add your score to the leaderboard?' : "Add your score to this phone's leaderboard?";
   game.shareText = 'I got Pedro ' + miles.toFixed(2) + ' miles toward game night. Score: ' + score.toLocaleString() + '. Beat that: ' + C.shareUrl;
 }
 
@@ -1850,10 +1962,16 @@ function updateHud() {
 }
 
 // ---------- Input ----------
+// Taps/keys on UI (buttons, the name field, the leaderboard) never drive or restart the car.
+const UI_SEL = 'button, a, input, .lb, #boardScreen';
+const onUi = (e) => e.target && e.target.closest && e.target.closest(UI_SEL);
 function onAnyStartInput(isKey, key) {
+  if (boardOpen) return true;
   if (game.state === 'title') { startRun(); return true; }
   if (game.state === 'paused') { resume(); return true; }
   if (game.state === 'over') {
+    const a = document.activeElement;
+    if (a && a.tagName === 'INPUT') { a.blur(); return true; }     // first tap just closes the keyboard
     const ready = performance.now() - game.overAt > C.restartLockSec * 1000;
     if (ready && (!isKey || key === ' ' || key === 'Enter')) startRun();
     return true;
@@ -1863,8 +1981,10 @@ function onAnyStartInput(isKey, key) {
 }
 window.addEventListener('keydown', (e) => {
   if (e.repeat) return;
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;   // typing a name
   Sfx.unlock();
   const k = e.key;
+  if (boardOpen) { if (k === 'Escape' || k === 'Enter' || k === ' ') { e.preventDefault(); closeBoard(); } return; }
   if (k === 'm' || k === 'M') { toggleMute(); return; }
   if (k === 'n' || k === 'N') { toggleMusic(); return; }
   if (k === 'ArrowLeft' || k === 'ArrowRight' || k === ' ' || k === 'ArrowUp' || k === 'ArrowDown') e.preventDefault();
@@ -1877,13 +1997,14 @@ window.addEventListener('keydown', (e) => {
 const SWIPE_PX = 28;
 const touch = { id: null, x0: 0, y0: 0, t0: 0, consumed: false };
 window.addEventListener('touchstart', (e) => {
-  if (e.target.closest && e.target.closest('button, a')) return;
+  if (onUi(e)) return;
   e.preventDefault();
   const t = e.changedTouches[0];
   touch.id = t.identifier; touch.x0 = t.clientX; touch.y0 = t.clientY; touch.t0 = performance.now(); touch.consumed = false;
   if (onAnyStartInput()) touch.consumed = true;
 }, { passive: false });
 window.addEventListener('touchmove', (e) => {
+  if (e.target && e.target.closest && e.target.closest('#boardScreen')) return;   // let the board scroll
   e.preventDefault();
   if (touch.consumed || touch.id === null) return;
   for (const t of e.changedTouches) {
@@ -1894,7 +2015,7 @@ window.addEventListener('touchmove', (e) => {
 }, { passive: false });
 window.addEventListener('touchend', (e) => {
   Sfx.unlock();
-  if (e.target.closest && e.target.closest('button, a')) return;
+  if (onUi(e)) return;
   e.preventDefault();
   for (const t of e.changedTouches) {
     if (t.identifier !== touch.id) continue;
@@ -1908,7 +2029,7 @@ document.addEventListener('dblclick', (e) => e.preventDefault());
 // Mouse (desktop) — click left/right half, or click to start
 window.addEventListener('mousedown', (e) => {
   Sfx.unlock();
-  if (e.target.closest && e.target.closest('button, a')) return;
+  if (onUi(e)) return;
   if (onAnyStartInput()) return;
   requestLane(e.clientX < window.innerWidth / 2 ? -1 : 1);
 });
@@ -1971,6 +2092,109 @@ async function share() {
   toast(ok ? 'Copied! Paste it in the group chat.' : text);
 }
 ui.shareBtn.addEventListener('click', (e) => { e.stopPropagation(); share(); ui.shareBtn.blur(); });
+
+// ---------- Leaderboard ----------
+const DEBUG_PARAMS = new URLSearchParams(location.search);
+const Board = (() => {
+  // ?debug&lbUrl=…&lbKey=… overrides CONFIG (testing aid)
+  const url = ((DEBUG && DEBUG_PARAMS.get('lbUrl')) || C.leaderboardUrl || '').replace(/\/+$/, '');
+  const key = (DEBUG && DEBUG_PARAMS.get('lbKey')) || C.leaderboardKey || '';
+  const shared = !!(url && key);
+  const LOCAL = 'pedro.board';
+  function headers(extra) {
+    const h = { apikey: key };
+    if (/^eyJ/.test(key)) h.Authorization = 'Bearer ' + key;     // legacy JWT anon keys also go in Authorization
+    return Object.assign(h, extra || {});
+  }
+  function clean(name) {
+    return String(name || '').replace(/[\u0000-\u001f\u007f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 16);
+  }
+  function readLocal() {
+    try { const a = JSON.parse(store.get(LOCAL, '[]')); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+  }
+  async function top() {
+    if (!shared) return readLocal().sort((a, b) => b.score - a.score).slice(0, C.leaderboardSize);
+    const r = await fetch(url + '/rest/v1/scores?select=name,score,miles,created_at&order=score.desc,created_at.asc&limit=' + C.leaderboardSize,
+      { headers: headers(), cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }
+  async function submit(name, score, miles) {
+    const row = { name: clean(name), score: Math.max(0, Math.floor(score)), miles: Math.round(miles * 100) / 100 };
+    if (!row.name) throw new Error('Enter a name first');
+    if (shared) {
+      const r = await fetch(url + '/rest/v1/scores', {
+        method: 'POST', headers: headers({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }), body: JSON.stringify(row),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+    } else {
+      const a = readLocal();
+      a.push(Object.assign({ created_at: new Date().toISOString() }, row));
+      a.sort((x, y) => y.score - x.score);
+      store.set(LOCAL, JSON.stringify(a.slice(0, 50)));
+    }
+    return row;
+  }
+  return { shared, top, submit, clean };
+})();
+
+let boardOpen = false, lastSubmitted = null;
+ui.lbForm = $('lbForm'); ui.lbName = $('lbName'); ui.lbSubmit = $('lbSubmit'); ui.lbMsg = $('lbMsg');
+ui.board = $('boardScreen'); ui.boardList = $('boardList'); ui.boardSrc = $('boardSrc');
+ui.lbName.value = store.get('pedro.name', '');
+
+function boardNote(text) {
+  ui.boardList.textContent = '';
+  const li = document.createElement('li'); li.className = 'empty'; li.textContent = text;
+  ui.boardList.appendChild(li);
+}
+async function openBoard() {
+  boardOpen = true;
+  ui.board.classList.remove('hidden');
+  ui.boardSrc.textContent = (Board.shared ? 'EVERYONE' : 'THIS DEVICE') + ' · TOP ' + C.leaderboardSize;
+  boardNote('Loading…');
+  let rows;
+  try { rows = await Board.top(); } catch (e) { boardNote("Couldn't reach the leaderboard. Check your connection."); return; }
+  if (!rows.length) { boardNote('No scores yet. Be the first!'); return; }
+  ui.boardList.textContent = '';
+  let marked = false;
+  rows.forEach((r, i) => {
+    const el = document.createElement('li');
+    const rank = document.createElement('b'); rank.textContent = (i + 1) + '.';
+    const nm = document.createElement('span'); nm.textContent = r.name;
+    const sc = document.createElement('em'); sc.textContent = Number(r.score).toLocaleString();
+    const mi = document.createElement('small'); mi.textContent = Number(r.miles).toFixed(2) + ' mi';
+    sc.appendChild(mi);
+    el.append(rank, nm, sc);
+    if (!marked && lastSubmitted && r.name === lastSubmitted.name && Number(r.score) === lastSubmitted.score) { el.className = 'me'; marked = true; }
+    ui.boardList.appendChild(el);
+  });
+}
+function closeBoard() { boardOpen = false; ui.board.classList.add('hidden'); }
+
+async function submitScore() {
+  if (ui.lbSubmit.disabled) return;
+  const name = Board.clean(ui.lbName.value);
+  if (!name) { ui.lbMsg.textContent = 'Type a name first.'; ui.lbName.focus(); return; }
+  ui.lbSubmit.disabled = true; ui.lbName.disabled = true;
+  ui.lbMsg.textContent = 'Saving…';
+  try {
+    lastSubmitted = await Board.submit(name, game.finalScore, game.finalMiles);
+    store.set('pedro.name', name);
+    ui.lbMsg.textContent = 'Added as ' + name + '!';
+    ui.lbName.blur();
+    openBoard();
+  } catch (e) {
+    ui.lbMsg.textContent = "Couldn't save the score. Tap Add to try again.";
+    ui.lbSubmit.disabled = false; ui.lbName.disabled = false;
+  }
+}
+ui.lbSubmit.addEventListener('click', (e) => { e.stopPropagation(); submitScore(); });
+ui.lbName.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitScore(); } });
+$('titleLbBtn').addEventListener('click', (e) => { e.stopPropagation(); openBoard(); });
+$('overLbBtn').addEventListener('click', (e) => { e.stopPropagation(); openBoard(); });
+$('boardClose').addEventListener('click', (e) => { e.stopPropagation(); closeBoard(); });
+
 
 // ---------- Camera ----------
 const camLook = new THREE.Vector3();

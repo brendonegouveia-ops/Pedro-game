@@ -70,6 +70,42 @@ const ROASTS = [
 
 Only one timed effect runs at a time; a new one replaces the old one. Full Coverage sits in its own slot and lasts until it's used, and a hit it absorbs doesn't cost a link.
 
+## Leaderboard
+
+After each drive, players can type a name and add their score. **🏆 Leaderboard** on the title and game-over screens shows the top 10.
+
+Until it's set up, the board is **per device**: it lives in that phone's browser storage. To make it **shared by everyone**, connect a free Supabase project (about 5 minutes):
+
+1. Create a free account and a new project at https://supabase.com. Any name and region work.
+2. In the project, open **SQL Editor → New query**, paste this, and click **Run**:
+
+   ```sql
+   create table public.scores (
+     id bigint generated always as identity primary key,
+     name text not null check (char_length(name) between 1 and 16),
+     score integer not null check (score between 0 and 5000000),
+     miles real not null check (miles between 0 and 500),
+     created_at timestamptz not null default now()
+   );
+   alter table public.scores enable row level security;
+   create policy "anyone can read scores" on public.scores for select to anon using (true);
+   create policy "anyone can add a score" on public.scores for insert to anon with check (true);
+   grant select, insert on public.scores to anon;
+   create index scores_score_idx on public.scores (score desc);
+   ```
+
+3. Open **Project Settings → API** (called **API Keys** / **Data API** in newer dashboards) and copy:
+   - the **Project URL** (looks like `https://abcdefgh.supabase.co`)
+   - the public **anon** key, or the **publishable** key (`sb_publishable_…`). Never use the `service_role` / secret key.
+4. Paste both into `CONFIG` in `index.html`:
+
+   ```js
+   leaderboardUrl: 'https://abcdefgh.supabase.co',
+   leaderboardKey: 'sb_publishable_…',
+   ```
+
+Both values are designed to be public. The table policies only allow reading scores and adding new ones; nobody can edit or delete rows from the game. Anyone determined could still post a fake score with that key, which is fine for a friend group. To remove a bogus entry, delete the row in Supabase's **Table Editor**.
+
 ## Fairness guarantee
 
 Traffic comes in rows from a seeded PRNG (mulberry32). Every row is validated before it is committed: it must leave a **guaranteed-open lane** that Pedro can reach from the previous row's open lane within the clear gap between the rows. Each lane change counts as `laneChangeMs + reactionSec` at the speed Pedro will be doing when he gets there, multiplied by `donutSpeedMult`, so the guarantee holds even mid-donut. Every move also has to leave 1.5 m of spare room. Lane-changers count as blocking both of their lanes, and tailgaters count as blocking theirs. A row that fails is regenerated, up to 8 tries, then replaced with an empty row.
