@@ -64,12 +64,20 @@
   .stat small { font-size: 10px; letter-spacing: 0.1em; opacity: 0.7; font-weight: 700; }
   .newBest { color: #ffd166; font-weight: 900; letter-spacing: 0.08em; margin-bottom: 10px; animation: pulse 0.8s ease-in-out infinite; }
   .seedline { margin-top: 14px; font-size: 11px; opacity: 0.55; font-variant-numeric: tabular-nums; }
-  #tailWarn {
-    position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 18px); transform: translateX(-50%);
-    background: rgba(200, 20, 30, 0.85); padding: 8px 14px; border-radius: 999px; font-weight: 900; font-size: 15px;
-    letter-spacing: 0.06em; box-shadow: 0 0 24px rgba(255,40,40,0.6); animation: blink 0.35s steps(2) infinite; white-space: nowrap;
+  /* Tailgater warning: anchored above Pedro's car (positioned each frame from the 3D projection) */
+  #tailWarn { position: fixed; left: 50%; top: 55%; transform: translate(-50%, -100%); pointer-events: none; z-index: 5; }
+  #tailWarn .tw {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    background: #d6141f; color: #fff; border: 3px solid #fff; border-radius: 16px; padding: 7px 14px 8px;
+    font-weight: 900; font-size: 15px; letter-spacing: 0.08em; white-space: nowrap; text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    box-shadow: 0 6px 22px rgba(0,0,0,0.5), 0 0 26px rgba(255,40,40,0.7); animation: twPulse 0.5s ease-in-out infinite;
   }
-  @keyframes blink { 50% { opacity: 0.55; } }
+  #tailWarn .tw b { font-size: 22px; letter-spacing: 0.04em; }
+  #tailWarn .tw::after {
+    content: ''; position: absolute; left: calc(50% + var(--dx, 0px)); bottom: -12px; transform: translateX(-50%);
+    border: 9px solid transparent; border-top-color: #fff; border-bottom: 0;
+  }
+  @keyframes twPulse { 50% { transform: scale(1.08); } }
 
   #hudPower { display: flex; justify-content: center; gap: 8px; margin-top: 8px; }
   .power {
@@ -231,7 +239,7 @@
 <div id="confetti"></div>
 <div id="banner" class="hidden"><div class="b1">Pedro made it</div><div class="b2">to game night!</div><small id="bannerSub">+1,000 · keep driving for score</small></div>
 
-<div id="tailWarn" class="hidden">⚠ TAILGATER <span id="tailWarnDir"></span></div>
+<div id="tailWarn" class="hidden"><div class="tw">⚠ TAILGATER<b id="tailWarnDir"></b></div></div>
 
 <button id="pauseBtn" class="iconBtn hidden" type="button" aria-label="Pause">
   <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
@@ -1450,7 +1458,34 @@ const Sfx = (() => {
       step = (step + 1) % STEPS;
     }
   }
+  // iOS routes Web Audio through the ringer channel, so the silent switch mutes it on the speaker
+  // (headphones still work). Declaring the session as "playback" makes it behave like media.
+  // Older iOS without navigator.audioSession: a looping silent <audio> element does the same.
+  let keepAlive = null;
+  function silentWavUrl() {
+    const rate = 8000, n = rate / 2, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+    const w = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    w(36, 'data'); v.setUint32(40, n * 2, true);
+    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  }
+  function playAsMedia() {
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) { /* unsupported */ }
+    try {
+      if (!keepAlive) {
+        keepAlive = document.createElement('audio');
+        keepAlive.src = silentWavUrl();
+        keepAlive.loop = true;
+        keepAlive.setAttribute('playsinline', '');
+        keepAlive.setAttribute('x-webkit-airplay', 'deny');
+      }
+      if (keepAlive.paused) { const p = keepAlive.play(); if (p && p.catch) p.catch(() => {}); }
+    } catch (e) { /* ignore */ }
+  }
   function unlock() {
+    playAsMedia();
     if (!ctx) {
       init();
       if (!ctx) return;
@@ -1528,7 +1563,13 @@ const Sfx = (() => {
       store.set('pedro.muted', m ? '1' : '0');
       if (master) master.gain.setTargetAtTime(m ? 0 : C.masterVolume, ctx.currentTime, 0.02);
     },
-    suspend() { if (ctx && ctx.state === 'running') ctx.suspend(); },
+    suspend() {
+      if (ctx && ctx.state === 'running') ctx.suspend();
+      if (keepAlive && !keepAlive.paused) keepAlive.pause();
+    },
+    mediaInfo() {
+      return { session: navigator.audioSession ? navigator.audioSession.type : 'unsupported', keepAlive: !!keepAlive && !keepAlive.paused };
+    },
     musicRate(r) { rate = Math.max(0.4, Math.min(1.4, r)); },
     setMusicPaused(p) { paused = p; },
     get musicOn() { return musicOn; },
@@ -2178,15 +2219,29 @@ function hitMilestone() {
   if (window.__pedroAudio) window.__pedroAudio.fanfare();
 }
 
-let tailText = '';
+let tailText = '', tailX = -1, tailY = -1, tailW = 0, tailCarX = -1;
 function updateTailWarn() {
   const lane = game.state === 'play' ? game.tailWarnLane : -9;
-  const text = lane < 0 ? '' : lane < player.lane ? '◀ LEFT' : lane > player.lane ? 'RIGHT ▶' : '▼ YOUR LANE';
-  if (text === tailText) return;
-  if (tailText === '' && text !== '') Sfx.horn();
-  tailText = text;
-  ui.tailWarn.classList.toggle('hidden', text === '');
-  ui.tailWarnDir.textContent = text;
+  const text = lane < 0 ? '' : lane < player.lane ? '◀ LEFT LANE' : lane > player.lane ? 'RIGHT LANE ▶' : '▼ BEHIND YOU ▼';
+  if (text !== tailText) {
+    if (tailText === '' && text !== '') Sfx.horn();
+    tailText = text;
+    ui.tailWarn.classList.toggle('hidden', text === '');
+    ui.tailWarnDir.textContent = text;
+    tailW = text === '' ? 0 : ui.tailWarn.offsetWidth * 1.08;   // room for the pulse
+    tailX = -1;
+  }
+  if (text === '') return;
+  // Keep it just above the car's roof as Pedro changes lanes, clamped on-screen; the pointer still aims at the car
+  _proj.set(player.x, 2.4, 0).project(camera);
+  const carX = Math.round((_proj.x + 1) / 2 * window.innerWidth), y = Math.round((1 - _proj.y) / 2 * window.innerHeight) - 14;
+  const half = tailW / 2 + 8, x = Math.max(half, Math.min(window.innerWidth - half, carX));
+  if (x !== tailX || carX !== tailCarX) {
+    tailX = x; tailCarX = carX;
+    ui.tailWarn.style.left = x + 'px';
+    ui.tailWarn.style.setProperty('--dx', Math.max(-tailW / 2 + 18, Math.min(tailW / 2 - 18, carX - x)) + 'px');
+  }
+  if (y !== tailY) { tailY = y; ui.tailWarn.style.top = y + 'px'; }
 }
 
 // ---------- Debug overlay: guaranteed-open lane per row ----------
@@ -2307,7 +2362,10 @@ window.__pedro = {
     if (game.spawner) for (const h of game.spawner.hazards) if (h.active) live++;
     return { state: game.state, lane: player.lane, x: player.x, tweening: player.t < 1, mph: game.mph * speedMult() * worldTimeScale(),
       lives: game.lives, hits: game.hits, damage: player.damageStage, speech: game.lastSpeech || '', lifeLine: game.lifeLine || '',
-      livesShown: ui.lifeIcons.filter((e) => !e.classList.contains('gone')).length, music: Sfx.musicInfo(),
+      livesShown: ui.lifeIcons.filter((e) => !e.classList.contains('gone')).length, music: Sfx.musicInfo(), media: Sfx.mediaInfo(),
+      tailWarn: (() => { const el = document.getElementById('tailWarn'); if (el.classList.contains('hidden')) return null;
+        const r = el.getBoundingClientRect(); _proj.set(player.x, 0.8, 0).project(camera);
+        return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, vw: innerWidth, cx: (r.left + r.right) / 2, carX: (_proj.x + 1) / 2 * innerWidth, carY: (1 - _proj.y) / 2 * innerHeight, text: el.innerText }; })(),
       miles: game.sigma / Core.METERS_PER_MILE, score: game.score, seed: game.seed, liveHazards: live,
       rows: game.spawner ? game.spawner.rowCount : 0, roast: game.lastRoast || '',
       nearMisses: game.nearMisses, milestoneHit: game.milestoneHit,

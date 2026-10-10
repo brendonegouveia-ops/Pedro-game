@@ -96,6 +96,7 @@ s = await snap();
 s.lane === startLane ? ok(`swipe left: lane -> ${s.lane}`) : fail(`swipe left: expected ${startLane}, got ${s.lane}`);
 
 // --- Keyboard + input buffering (second press during tween is queued) ---
+await page.waitForFunction(() => !window.__pedro.snapshot().tweening);   // previous swipe settled
 await page.keyboard.press('ArrowRight');
 await page.keyboard.press('ArrowRight');
 await sleep(500);
@@ -203,12 +204,14 @@ async function autopilot(label, query, seconds, expect) {
     requestAnimationFrame(tick);
   });
   const t0 = Date.now();
-  let st;
+  let st, tw = null;
   while (Date.now() - t0 < seconds * 1000) {
     st = await p2.evaluate(() => window.__pedro.snapshot());
     if (st.state !== 'play') break;
-    await sleep(500);
+    if (st.tailWarn && !tw) { tw = st.tailWarn; await p2.screenshot({ path: path.join(outDir, `5-tailgater-${label}.png`) }); }
+    await sleep(tw ? 500 : 150);
   }
+  st.firstTailWarn = tw;
   await p2.screenshot({ path: path.join(outDir, `5-autopilot-${label}.png`) });
   st.state === 'play'
     ? ok(`autopilot ${label}: no crash over ${((Date.now() - t0) / 1000).toFixed(0)} s, ${st.miles.toFixed(2)} mi, ${st.mph.toFixed(0)} mph, ${st.nearMisses} close calls, ${st.powerups} power-ups`)
@@ -225,7 +228,13 @@ if (!QUICK) await autopilot('milestone', '?debug&seed=777&start=9.8', 25, (st) =
   st.nearMisses > 0 ? ok(`near-miss bonus awarded (${st.nearMisses})`) : fail('no near misses recorded');
 });
 if (!QUICK) await autopilot('start', '?debug&seed=4242', 30);
-if (!QUICK) await autopilot('brutal', '?debug&seed=4243&start=12', 30);
+if (!QUICK) await autopilot('brutal', '?debug&seed=4243&start=12', 30, (st) => {
+  const tw = st.firstTailWarn;
+  if (!tw) { fail('no tailgater warning seen in 30 s at full difficulty'); return; }
+  tw.bottom < tw.carY && tw.top > 0 && tw.left >= 0 && tw.right <= tw.vw && (Math.abs(tw.cx - tw.carX) < 40 || tw.left < 12 || tw.right > tw.vw - 12)
+    ? ok(`tailgater warning sits above the car (bottom ${tw.bottom.toFixed(0)}px < car ${tw.carY.toFixed(0)}px, fully on-screen ${tw.left.toFixed(0)}–${tw.right.toFixed(0)} of ${tw.vw}px): "${tw.text.replace(/\s+/g, ' ')}"`)
+    : fail('tailgater warning misplaced: ' + JSON.stringify(tw));
+});
 
 // --- Power-ups ---
 {
@@ -240,15 +249,16 @@ if (!QUICK) await autopilot('brutal', '?debug&seed=4243&start=12', 30);
   const sn = () => p3.evaluate(() => window.__pedro.snapshot());
   const hud = () => p3.evaluate(() => window.__pedro.hudText());
   // Brake Check: world slows, timer counts down, HUD shows it
+  await p3.waitForFunction(() => window.__pedro.snapshot().mph > 100, null, { timeout: 15000 });   // first frames ran
   let a = await sn();
   await p3.evaluate(() => window.__pedro.grant(1));
-  await sleep(200);
+  await p3.waitForFunction(() => /BRAKE CHECK/.test(window.__pedro.hudText()), null, { timeout: 10000 }).catch(() => {});
   let b = await sn();
   b.effect === 1 && /BRAKE CHECK/.test(await hud()) ? ok('Brake Check active + HUD timer shown') : fail('brake check not active: ' + JSON.stringify(b));
   b.mph < a.mph * 0.6 ? ok(`Brake Check slows the world (${a.mph.toFixed(0)} -> ${b.mph.toFixed(0)} effective mph)`) : fail(`no slow-mo: ${a.mph} -> ${b.mph}`);
   // Only one timed effect: Carpool replaces Brake Check
   await p3.evaluate(() => window.__pedro.grant(3));
-  await sleep(500);
+  await p3.waitForFunction(() => /CARPOOL/.test(window.__pedro.hudText()), null, { timeout: 10000 }).catch(() => {});
   b = await sn();
   b.effect === 3 && /CARPOOL/.test(await hud()) && !/BRAKE/.test(await hud()) ? ok('Carpool replaces Brake Check (one timed effect at a time)') : fail('effect replacement broken: ' + (await hud()));
   // Kamikaze pilot: steer INTO a blocked lane of the next row (real key events)
@@ -349,6 +359,7 @@ async function kamikaze(pg) {
   await sleep(400);
   let a = await pm.evaluate(() => window.__pedro.snapshot());
   a.audio === 'running' ? ok('WebAudio unlocked by first tap') : fail('audio state after tap: ' + a.audio);
+  a.media.keepAlive ? ok(`media-playback session active after tap (audioSession: ${a.media.session}, silent <audio> keep-alive playing)`) : fail('media session not active: ' + JSON.stringify(a.media));
   await pm.keyboard.press('m');
   a = await pm.evaluate(() => window.__pedro.snapshot());
   a.muted ? ok('M toggles mute') : fail('mute did not toggle');

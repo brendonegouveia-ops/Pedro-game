@@ -94,6 +94,6 @@ node smoke.mjs --quick       # same, minus the two long autopilot runs
 
 ## Notes
 
-- **iPhone sound:** sound starts on your first tap (an iOS rule). It's also silenced by the ring/silent switch, like any web audio on iOS.
+- **iPhone sound:** sound starts on your first tap (an iOS rule). The game tells iOS it's media playback, so it plays through the speaker even with the ring/silent switch on (iOS 16.4+ uses `navigator.audioSession`; older versions use a silent looping audio element). Use the in-game 🔊 / ♪ buttons to mute.
 - **Saved data:** the high score and mute setting live in `localStorage`. Private browsing just doesn't save them.
 - **Battery:** the game pauses automatically when you switch tabs or lock the phone; tap to resume.
