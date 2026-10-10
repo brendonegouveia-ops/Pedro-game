@@ -225,6 +225,7 @@
   .lbMigrate .lbRow { justify-content: center; }
   .lbMigrate button { font: inherit; font-weight: 900; font-size: 14px; border: 0; border-radius: 12px; padding: 8px 14px; cursor: pointer; background: #ffd166; color: #1a1030; }
   .lbMigrate .lbBtn { background: rgba(255,255,255,0.14); color: #fff; border: 2px solid rgba(255,255,255,0.5); border-radius: 999px; }
+  .board .errDetail { font-size: 11px; opacity: 0.6; padding-top: 0; font-family: ui-monospace, Menlo, monospace; word-break: break-word; }
   .board .empty { opacity: 0.7; padding: 16px 0; display: block; text-align: center; }
 
   #debugPanel {
@@ -2122,21 +2123,43 @@ const Board = (() => {
   function readLocal() {
     try { const a = JSON.parse(store.get(LOCAL, '[]')); return Array.isArray(a) ? a : []; } catch (e) { return []; }
   }
+  // Turn a failed response into a readable reason (Supabase/PostgREST put details in a JSON body).
+  async function failure(r) {
+    let body = {};
+    try { body = await r.json(); } catch (e) { /* not JSON */ }
+    const code = body.code || '', msg = String(body.message || body.msg || body.error || '');
+    const err = new Error(msg || ('HTTP ' + r.status));
+    err.status = r.status; err.code = code;
+    if (r.status === 404 || code === 'PGRST205' || code === '42P01' || /does not exist|could not find the table/i.test(msg))
+      err.reason = "The leaderboard table isn't set up yet. Run the SQL from the README in Supabase's SQL Editor.";
+    else if (r.status === 401 || r.status === 403 || code === '42501' || /permission|api key|jwt|unauthor/i.test(msg))
+      err.reason = 'The leaderboard key or table permissions are wrong. Check the key and the policies/grant in the SQL.';
+    else if (r.status === 400 && /check constraint|violates/i.test(msg))
+      err.reason = "That score wasn't accepted by the board's rules.";
+    else err.reason = 'The leaderboard server returned an error.';
+    err.detail = 'HTTP ' + r.status + (code ? ' · ' + code : '') + (msg ? ' · ' + msg.slice(0, 120) : '');
+    return err;
+  }
+  async function call(path, opts) {
+    let r;
+    try { r = await fetch(url + path, opts); }
+    catch (e) { const err = new Error('network'); err.reason = "Couldn't reach the leaderboard server. Check your connection."; err.detail = String(e && e.message || e); throw err; }
+    if (!r.ok) throw await failure(r);
+    return r;
+  }
   async function top() {
     if (!shared) return readLocal().sort((a, b) => b.score - a.score).slice(0, C.leaderboardSize);
-    const r = await fetch(url + '/rest/v1/scores?select=name,score,miles,created_at&order=score.desc,created_at.asc&limit=' + C.leaderboardSize,
+    const r = await call('/rest/v1/scores?select=name,score,miles,created_at&order=score.desc,created_at.asc&limit=' + C.leaderboardSize,
       { headers: headers(), cache: 'no-store' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }
   async function submit(name, score, miles) {
     const row = { name: clean(name), score: Math.max(0, Math.floor(score)), miles: Math.round(miles * 100) / 100 };
     if (!row.name) throw new Error('Enter a name first');
     if (shared) {
-      const r = await fetch(url + '/rest/v1/scores', {
+      await call('/rest/v1/scores', {
         method: 'POST', headers: headers({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }), body: JSON.stringify(row),
       });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
     } else {
       const a = readLocal();
       a.push(Object.assign({ created_at: new Date().toISOString() }, row));
@@ -2165,16 +2188,14 @@ const Board = (() => {
     // skip anything already on the shared board (same name + score)
     const fresh = [];
     for (const r of rows) {
-      const q = url + '/rest/v1/scores?select=score&name=eq.' + encodeURIComponent(r.name) + '&score=eq.' + r.score + '&limit=1';
-      const res = await fetch(q, { headers: headers(), cache: 'no-store' });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const res = await call('/rest/v1/scores?select=score&name=eq.' + encodeURIComponent(r.name) + '&score=eq.' + r.score + '&limit=1',
+        { headers: headers(), cache: 'no-store' });
       if (!(await res.json()).length) fresh.push(r);
     }
     if (fresh.length) {
-      const res = await fetch(url + '/rest/v1/scores', {
+      await call('/rest/v1/scores', {
         method: 'POST', headers: headers({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }), body: JSON.stringify(fresh),
       });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
     }
     store.set(MIGRATED, 'done');
     return fresh.length;
@@ -2213,7 +2234,7 @@ mig.yes.addEventListener('click', async (e) => {
     toast(n ? 'Added ' + n + ' saved score' + (n > 1 ? 's' : '') + ' to the shared board!' : 'Those scores were already on the board.');
     openBoard();
   } catch (err) {
-    mig.text.textContent = "Couldn't reach the leaderboard. Try again in a bit.";
+    mig.text.textContent = (err.reason || "Couldn't reach the leaderboard.") + (err.detail ? ' (' + err.detail + ')' : '');
     mig.yes.disabled = false; mig.no.disabled = false;
   }
 });
@@ -2225,7 +2246,12 @@ async function openBoard() {
   ui.boardSrc.textContent = (Board.shared ? 'EVERYONE' : 'THIS DEVICE') + ' · TOP ' + C.leaderboardSize;
   boardNote('Loading…');
   let rows;
-  try { rows = await Board.top(); } catch (e) { boardNote("Couldn't reach the leaderboard. Check your connection."); return; }
+  try { rows = await Board.top(); }
+  catch (e) {
+    boardNote(e.reason || "Couldn't reach the leaderboard.");
+    if (e.detail) { const d = document.createElement('li'); d.className = 'empty errDetail'; d.textContent = e.detail; ui.boardList.appendChild(d); }
+    return;
+  }
   if (!rows.length) { boardNote('No scores yet. Be the first!'); return; }
   ui.boardList.textContent = '';
   let marked = false;
@@ -2258,7 +2284,7 @@ async function submitScore() {
     ui.lbName.blur();
     openBoard();
   } catch (e) {
-    ui.lbMsg.textContent = "Couldn't save the score. Tap Add to try again.";
+    ui.lbMsg.textContent = (e.reason || "Couldn't save the score.") + (e.detail ? ' (' + e.detail + ')' : '') + ' Tap Add to try again.';
     ui.lbSubmit.disabled = false; ui.lbName.disabled = false;
   }
 }
