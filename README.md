@@ -79,10 +79,10 @@ The board is **shared by everyone**: it's connected to a Supabase project throug
 If you blank out those two values, the game falls back to a per-device board. To point it at a different Supabase project (about 5 minutes):
 
 1. Create a free account and a new project at https://supabase.com. Any name and region work.
-2. In the project, open **SQL Editor → New query**, paste this, and click **Run**:
+2. In the project, open **SQL Editor → New query**, paste this, and click **Run**. It's safe to re-run; Supabase may warn about "destructive operations" because of the two `drop policy if exists` lines, which only replace the access rules:
 
    ```sql
-   create table public.scores (
+   create table if not exists public.scores (
      id bigint generated always as identity primary key,
      name text not null check (char_length(name) between 1 and 16),
      score integer not null check (score between 0 and 5000000),
@@ -90,10 +90,13 @@ If you blank out those two values, the game falls back to a per-device board. To
      created_at timestamptz not null default now()
    );
    alter table public.scores enable row level security;
+   drop policy if exists "anyone can read scores" on public.scores;
+   drop policy if exists "anyone can add a score" on public.scores;
    create policy "anyone can read scores" on public.scores for select to anon using (true);
    create policy "anyone can add a score" on public.scores for insert to anon with check (true);
    grant select, insert on public.scores to anon;
-   create index scores_score_idx on public.scores (score desc);
+   create index if not exists scores_score_idx on public.scores (score desc);
+   notify pgrst, 'reload schema';
    ```
 
 3. Open **Project Settings → API** (called **API Keys** / **Data API** in newer dashboards) and copy:
