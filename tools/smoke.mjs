@@ -76,6 +76,7 @@ await tap(W / 2, H / 2);
 await sleep(300);
 s = await snap();
 s.state === 'play' ? ok('tap starts the run') : fail('tap did not start run: ' + s.state);
+s.lives === 3 && s.livesShown === 3 ? ok('HUD shows 3 chouriço links') : fail(`lives at start: ${s.lives}, shown ${s.livesShown}`);
 const startLane = s.lane;
 
 // --- Tap right half / left half ---
@@ -125,11 +126,31 @@ s.mph > 70 && s.miles > 0 ? ok(`speed rising: ${s.mph.toFixed(1)} mph at ${s.mil
   sawTraffic ? ok(`traffic spawning (${s.liveHazards} live hazards, ${s.rows} rows)`) : fail('no traffic spawned');
   await sleep(1200);
   await page.screenshot({ path: path.join(outDir, '3-traffic.png') });
-  // Sit still in one lane: traffic must eventually hit us.
+  // Steer into traffic: three chouriço links, then the wreck.
+  await kamikaze(page);
   t = Date.now();
   let sawCrashing = false;
-  while (Date.now() - t < 90000) { s = await snap(); if (s.state === 'crashing') sawCrashing = true; if (s.state === 'over') break; await sleep(40); }
-  s.state === 'over' ? ok(`collision -> crash -> game over at ${s.miles.toFixed(2)} mi, score ${Math.floor(s.score)}`) : fail('never crashed (state ' + s.state + ')');
+  const seen = {};
+  while (Date.now() - t < 150000) {
+    s = await snap();
+    if (s.state === 'crashing') sawCrashing = true;
+    if (s.state === 'play' && s.lives < 3 && !seen[s.lives]) {
+      seen[s.lives] = { damage: s.damage, shown: s.livesShown, speech: s.lifeLine };
+      if (s.lives === 2) await page.screenshot({ path: path.join(outDir, '3b-first-hit.png') });
+      if (s.lives === 1) await page.screenshot({ path: path.join(outDir, '3c-second-hit.png') });
+    }
+    if (s.state === 'over') break;
+    await sleep(40);
+  }
+  const L = (await page.evaluate(() => LIFE_LOST_LINES));
+  for (const n of [2, 1]) {
+    const e = seen[n];
+    e && e.damage === 3 - n && e.shown === n && L.includes(e.speech)
+      ? ok(`hit #${3 - n}: ${n} link(s) left, car damage stage ${e.damage}, Pedro: "${e.speech}"`)
+      : fail(`hit #${3 - n} state: ${JSON.stringify(e)}`);
+  }
+  s.state === 'over' ? ok(`third hit -> crash -> game over at ${s.miles.toFixed(2)} mi, score ${Math.floor(s.score)}`) : fail('never crashed (state ' + s.state + ')');
+  s.damage === 3 && s.livesShown === 0 ? ok('wreck shows final damage stage, no links left') : fail(`final damage ${s.damage}, shown ${s.livesShown}`);
   sawCrashing ? ok('slow-mo spin-out state observed before game over') : fail('no crashing state observed');
   await tap(W / 2, H / 2); await sleep(60);
   s = await snap();
@@ -192,17 +213,19 @@ async function autopilot(label, query, seconds, expect) {
   st.state === 'play'
     ? ok(`autopilot ${label}: no crash over ${((Date.now() - t0) / 1000).toFixed(0)} s, ${st.miles.toFixed(2)} mi, ${st.mph.toFixed(0)} mph, ${st.nearMisses} close calls, ${st.powerups} power-ups`)
     : fail(`autopilot ${label}: crashed at ${st.miles.toFixed(2)} mi (seed ${st.seed})`);
+  st.hits === 0 ? ok(`autopilot ${label}: zero hits, all 3 links intact`) : fail(`autopilot ${label}: took ${st.hits} hit(s) following the guaranteed lane`);
   if (expect) expect(st);
   if (errs.length) fail(`autopilot ${label} console errors: ` + errs.join(' | '));
   await p2.close();
   return st;
 }
 const QUICK = process.argv.includes('--quick');   // skip the long autopilot runs
-if (!QUICK) await autopilot('milestone', '?debug&seed=777&start=2.75', 25, (st) => {
-  st.milestoneHit ? ok('passed 3 mi: "PEDRO MADE IT TO GAME NIGHT!" banner fired') : fail('milestone not reached');
+if (!QUICK) await autopilot('milestone', '?debug&seed=777&start=9.8', 25, (st) => {
+  st.milestoneHit ? ok('passed 10 mi: "PEDRO MADE IT TO GAME NIGHT!" banner fired') : fail('milestone not reached');
   st.nearMisses > 0 ? ok(`near-miss bonus awarded (${st.nearMisses})`) : fail('no near misses recorded');
 });
-if (!QUICK) await autopilot('brutal', '?debug&seed=4242&start=8', 30);
+if (!QUICK) await autopilot('start', '?debug&seed=4242', 30);
+if (!QUICK) await autopilot('brutal', '?debug&seed=4243&start=12', 30);
 
 // --- Power-ups ---
 {
@@ -250,21 +273,64 @@ if (!QUICK) await autopilot('brutal', '?debug&seed=4242&start=8', 30);
   while (Date.now() - t0 < 40000) { c = await sn(); if (c.state !== 'play' || c.effect !== 2 || (c.plowed > 0 && c.effectT < 1.2)) break; await sleep(150); if (c.plowed > 0 && !globalThis.__shot) { globalThis.__shot = 1; await p3.screenshot({ path: path.join(outDir, '6-fresh-detail.png') }); } }
   c.state === 'play' && c.plowed > 0 ? ok(`Fresh Detail: plowed ${c.plowed} hazards aside while steering into traffic, no crash`) : fail(`Fresh Detail: state ${c.state}, plowed ${c.plowed}`);
   // Full Coverage: absorb exactly one crash
-  await p3.evaluate(() => window.__pedro.grant(0));
-  await sleep(100);
-  c = await sn();
-  c.shield && /FULL COVERAGE/.test(await hud()) ? ok('Full Coverage shield up + HUD badge') : fail('no shield');
+  const shieldNow = await p3.evaluate(() => { window.__pedro.grant(0); return window.__pedro.snapshot().shield; });
+  const badge = await p3.waitForFunction(() => !window.__pedro.snapshot().shield || /FULL COVERAGE/.test(window.__pedro.hudText()), null, { timeout: 10000 }).then(() => true, () => false);
+  shieldNow && badge ? ok('Full Coverage shield up + HUD badge') : fail(`no shield (granted ${shieldNow}, badge ${badge})`);
   await p3.screenshot({ path: path.join(outDir, '7-coverage.png') });
   t0 = Date.now();
   while (Date.now() - t0 < 60000) { c = await sn(); if (!c.shield || c.state !== 'play') break; await sleep(100); }
   !c.shield && c.state === 'play' ? ok('Full Coverage absorbed a crash, run continues') : fail('shield did not absorb: ' + JSON.stringify(c));
+  c.lives === 3 ? ok('shield hit cost no chouriço link') : fail('shield hit cost a life: ' + c.lives);
+  // Next hits cost links
   t0 = Date.now();
-  while (Date.now() - t0 < 60000) { c = await sn(); if (c.state !== 'play') break; await sleep(100); }
-  c.state !== 'play' ? ok('next hit after the shield is spent ends the run') : fail('second hit did not crash');
+  while (Date.now() - t0 < 60000) { c = await sn(); if (c.lives < 3 || c.state !== 'play') break; await sleep(100); }
+  c.lives === 2 && c.state === 'play' ? ok('next hit costs one link, run continues') : fail('after shield: ' + JSON.stringify({ l: c.lives, s: c.state }));
+  // Rare chouriço restores a link and repairs a damage stage
   await p3.evaluate(() => { window.__kamikaze = false; });
+  await sleep(2300);   // let the post-hit grace end
+  c = await sn();
+  const before = c.lives;
+  await p3.evaluate(() => window.__pedro.grant(5));
+  await sleep(250);
+  c = await sn();
+  const R = await p3.evaluate(() => REPAIR_LINES);
+  c.lives === Math.min(3, before + 1) && c.damage === 3 - c.lives && R.includes(c.speech)
+    ? ok(`chouriço: ${before} -> ${c.lives} links, damage stage ${c.damage}, Pedro: "${c.speech}"`) : fail('chouriço: ' + JSON.stringify({ before, l: c.lives, d: c.damage, sp: c.speech }));
+  await p3.evaluate(() => window.__pedro.grant(5));
+  await sleep(150);
+  c = await sn();
+  c.lives === 3 ? ok('chouriço at full links gives points instead (no 4th link)') : fail('lives exceeded max: ' + c.lives);
+  // Donut: speed boost
+  a = await sn();
+  await p3.evaluate(() => window.__pedro.grant(4));
+  await sleep(300);
+  b = await sn();
+  const ratio = b.mph / a.mph;
+  b.effect === 4 && /DONUT RUSH/.test(await hud()) && ratio > 1.25 && ratio < 1.36
+    ? ok(`donut boost: ${a.mph.toFixed(0)} -> ${b.mph.toFixed(0)} mph (x${ratio.toFixed(2)}), HUD shows DONUT RUSH`) : fail(`donut: effect ${b.effect}, ratio ${ratio}, hud ${await hud()}`);
+  await p3.screenshot({ path: path.join(outDir, '7b-donut.png') });
+  const info = (await sn()).music;
+  info.on && info.notes > 0 ? ok(`background music playing (${info.notes} accordion notes scheduled)`) : fail('music not playing: ' + JSON.stringify(info));
   // Natural pickups happen in normal play (the autopilot drives the guaranteed lane where most spawn)
   if (errs.length) fail('power-up page console errors: ' + errs.join(' | ')); else ok('power-up page: no console errors');
   await p3.close();
+}
+
+// Steer into traffic with real key events (used to end runs quickly)
+async function kamikaze(pg) {
+  await pg.evaluate(() => {
+    const key = (k) => window.dispatchEvent(new KeyboardEvent('keydown', { key: k }));
+    (function tick() {
+      requestAnimationFrame(tick);
+      const c = window.__pedro.corridor();
+      if (c.state !== 'play' || c.tweening) return;
+      const row = c.rows.find((r) => r.mask && r.B > c.sigma);
+      if (!row || (row.mask & (1 << c.lane))) return;
+      let best = -1;
+      for (let l = 0; l < 4; l++) if ((row.mask & (1 << l)) && (best < 0 || Math.abs(l - c.lane) < Math.abs(best - c.lane))) best = l;
+      if (best >= 0) key(best > c.lane ? 'ArrowRight' : 'ArrowLeft');
+    })();
+  });
 }
 
 // --- Audio, mute, share ---
@@ -296,8 +362,9 @@ if (!QUICK) await autopilot('brutal', '?debug&seed=4242&start=8', 30);
   !a.muted && a.state === 'title' ? ok('mute button toggles without starting the run') : fail('mute button: ' + JSON.stringify({ m: a.muted, s: a.state }));
   // crash quickly, then share
   await pm.keyboard.press('Enter');
+  await kamikaze(pm);
   let t0 = Date.now();
-  while (Date.now() - t0 < 90000) { a = await pm.evaluate(() => window.__pedro.snapshot()); if (a.state === 'over') break; await sleep(200); }
+  while (Date.now() - t0 < 180000) { a = await pm.evaluate(() => window.__pedro.snapshot()); if (a.state === 'over') break; await sleep(200); }
   await sleep(300);
   await pm.tap('#shareBtn');
   await sleep(300);
@@ -317,8 +384,9 @@ if (!QUICK) await autopilot('brutal', '?debug&seed=4242&start=8', 30);
   await pd.goto(pathToFileURL(path.join(root, 'index.html')).href + '?seed=5');
   await pd.waitForFunction(() => window.__pedro && window.__pedro.ready);
   await pd.keyboard.press('Enter');
+  await kamikaze(pd);
   t0 = Date.now();
-  while (Date.now() - t0 < 90000) { a = await pd.evaluate(() => window.__pedro.snapshot()); if (a.state === 'over') break; await sleep(200); }
+  while (Date.now() - t0 < 180000) { a = await pd.evaluate(() => window.__pedro.snapshot()); if (a.state === 'over') break; await sleep(200); }
   await sleep(300);
   await pd.click('#shareBtn');
   await sleep(400);
@@ -337,9 +405,10 @@ if (!QUICK) await autopilot('brutal', '?debug&seed=4242&start=8', 30);
   await ps.waitForFunction(() => window.__pedro && window.__pedro.ready);
   await ps.keyboard.press('Enter');
   await ps.evaluate(() => window.__pedro.grant(2));   // invincible so it survives to the sign
-  await ps.waitForFunction(() => window.__pedro.snapshot().miles >= 1.97, null, { timeout: 30000 });
+  const reached = await ps.waitForFunction(() => window.__pedro.snapshot().miles >= 1.97, null, { timeout: 120000 }).then(() => true, () => false);
   await ps.screenshot({ path: path.join(outDir, '10-mile-sign.png') });
-  ok('mile-sign screenshot captured (tools/out/10-mile-sign.png)');
+  reached ? ok('mile-sign screenshot captured (tools/out/10-mile-sign.png)')
+    : fail('mile sign: never reached mile 1.97: ' + JSON.stringify(await ps.evaluate(() => window.__pedro.snapshot())));
   await ps.close();
 }
 

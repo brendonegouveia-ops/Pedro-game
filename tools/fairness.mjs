@@ -45,7 +45,8 @@ function diffOf(miles) {
   return p[p.length - 1][1];
 }
 function vOf(sigma) { const d = diffOf(sigma / MPM); return (CONFIG.startSpeedMph + (CONFIG.maxSpeedMph - CONFIG.startSpeedMph) * d) * MPH; }
-const LC = CONFIG.laneChangeMs / 1000 + CONFIG.reactionSec;
+// Rows are validated as if Pedro is boosted by a donut (fastest he can go), so check at that speed.
+const LC = (CONFIG.laneChangeMs / 1000 + CONFIG.reactionSec) * CONFIG.donutSpeedMult;
 const EPS = 1e-6;
 
 function runSeed(seed) {
