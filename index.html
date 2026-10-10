@@ -220,6 +220,11 @@
   .board li span { font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .board li em { font-style: normal; font-weight: 900; text-align: right; }
   .board li small { display: block; font-size: 11px; opacity: 0.6; font-weight: 700; }
+  .lbMigrate { background: rgba(255,209,102,0.14); border: 2px solid #ffd166; border-radius: 12px; padding: 10px; margin-bottom: 10px; }
+  .lbMigrate p { margin: 0 0 8px; font-weight: 700; font-size: 14px; line-height: 1.3; }
+  .lbMigrate .lbRow { justify-content: center; }
+  .lbMigrate button { font: inherit; font-weight: 900; font-size: 14px; border: 0; border-radius: 12px; padding: 8px 14px; cursor: pointer; background: #ffd166; color: #1a1030; }
+  .lbMigrate .lbBtn { background: rgba(255,255,255,0.14); color: #fff; border: 2px solid rgba(255,255,255,0.5); border-radius: 999px; }
   .board .empty { opacity: 0.7; padding: 16px 0; display: block; text-align: center; }
 
   #debugPanel {
@@ -316,6 +321,10 @@
   <div class="board">
     <h2>🏆 Leaderboard</h2>
     <div class="src" id="boardSrc"></div>
+    <div class="lbMigrate hidden" id="lbMigrate">
+      <p id="lbMigrateText"></p>
+      <div class="lbRow"><button id="lbMigrateYes" type="button">Add them</button><button id="lbMigrateNo" class="lbBtn" type="button">Not now</button></div>
+    </div>
     <ol id="boardList"></ol>
     <button class="lbBtn" id="boardClose" type="button">Close</button>
   </div>
@@ -442,8 +451,8 @@ const CONFIG = {
 
   // --- Leaderboard ---
   // Shared online board via Supabase (see README). Leave both empty for a this-device-only board.
-  leaderboardUrl: '',          // e.g. 'https://abcdefgh.supabase.co'
-  leaderboardKey: '',          // the project's public anon / publishable key (safe to publish; RLS protects the table)
+  leaderboardUrl: 'https://ppppjzmcnqatekvwpzem.supabase.co',
+  leaderboardKey: 'sb_publishable_bJDG_GzQetwllsk5Eu1PCg_QzhBxUCz',   // public publishable key (safe to publish; RLS protects the table)
   leaderboardSize: 10,         // rows shown
   masterVolume: 0.7,
   musicVolume: 0.22,           // background music level (relative to master)
@@ -2097,8 +2106,9 @@ ui.shareBtn.addEventListener('click', (e) => { e.stopPropagation(); share(); ui.
 const DEBUG_PARAMS = new URLSearchParams(location.search);
 const Board = (() => {
   // ?debug&lbUrl=…&lbKey=… overrides CONFIG (testing aid)
-  const url = ((DEBUG && DEBUG_PARAMS.get('lbUrl')) || C.leaderboardUrl || '').replace(/\/+$/, '');
-  const key = (DEBUG && DEBUG_PARAMS.get('lbKey')) || C.leaderboardKey || '';
+  const forceLocal = DEBUG && DEBUG_PARAMS.has('lbLocal');
+  const url = forceLocal ? '' : ((DEBUG && DEBUG_PARAMS.get('lbUrl')) || C.leaderboardUrl || '').replace(/\/+$/, '');
+  const key = forceLocal ? '' : (DEBUG && DEBUG_PARAMS.get('lbKey')) || C.leaderboardKey || '';
   const shared = !!(url && key);
   const LOCAL = 'pedro.board';
   function headers(extra) {
@@ -2135,7 +2145,42 @@ const Board = (() => {
     }
     return row;
   }
-  return { shared, top, submit, clean };
+  // One-time: copy scores saved on this phone (before the board went online) to the shared board.
+  const MIGRATED = 'pedro.boardShared';   // '' | 'skipped' | 'done'
+  function pendingLocal() {
+    if (!shared || store.get(MIGRATED, '') === 'done') return [];
+    const seen = new Set(), out = [];
+    for (const r of readLocal().sort((a, b) => b.score - a.score)) {
+      const row = { name: clean(r.name), score: Math.max(0, Math.floor(Number(r.score) || 0)), miles: Math.round((Number(r.miles) || 0) * 100) / 100 };
+      const k = row.name + '|' + row.score;
+      if (!row.name || row.score <= 0 || seen.has(k)) continue;
+      seen.add(k); out.push(row);
+      if (out.length >= C.leaderboardSize) break;
+    }
+    return out;
+  }
+  async function migrate() {
+    const rows = pendingLocal();
+    if (!rows.length) { store.set(MIGRATED, 'done'); return 0; }
+    // skip anything already on the shared board (same name + score)
+    const fresh = [];
+    for (const r of rows) {
+      const q = url + '/rest/v1/scores?select=score&name=eq.' + encodeURIComponent(r.name) + '&score=eq.' + r.score + '&limit=1';
+      const res = await fetch(q, { headers: headers(), cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      if (!(await res.json()).length) fresh.push(r);
+    }
+    if (fresh.length) {
+      const res = await fetch(url + '/rest/v1/scores', {
+        method: 'POST', headers: headers({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }), body: JSON.stringify(fresh),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    }
+    store.set(MIGRATED, 'done');
+    return fresh.length;
+  }
+  return { shared, top, submit, clean, pendingLocal, migrate,
+    migrationState: () => store.get(MIGRATED, ''), skipMigration: () => store.set(MIGRATED, 'skipped') };
 })();
 
 let boardOpen = false, lastSubmitted = null;
@@ -2148,9 +2193,35 @@ function boardNote(text) {
   const li = document.createElement('li'); li.className = 'empty'; li.textContent = text;
   ui.boardList.appendChild(li);
 }
+const mig = { box: $('lbMigrate'), text: $('lbMigrateText'), yes: $('lbMigrateYes'), no: $('lbMigrateNo') };
+function refreshMigrateBanner() {
+  const rows = Board.pendingLocal();
+  mig.box.classList.toggle('hidden', !rows.length);
+  if (rows.length) {
+    const names = [...new Set(rows.map((r) => r.name))].slice(0, 3).join(', ');
+    mig.text.textContent = 'This phone has ' + rows.length + ' saved score' + (rows.length > 1 ? 's' : '') + ' (' + names + ') from before the board went online. Add ' + (rows.length > 1 ? 'them' : 'it') + ' to the shared board?';
+    mig.yes.disabled = false; mig.no.disabled = false;
+  }
+}
+mig.yes.addEventListener('click', async (e) => {
+  e.stopPropagation();
+  mig.yes.disabled = true; mig.no.disabled = true;
+  mig.text.textContent = 'Uploading…';
+  try {
+    const n = await Board.migrate();
+    mig.box.classList.add('hidden');
+    toast(n ? 'Added ' + n + ' saved score' + (n > 1 ? 's' : '') + ' to the shared board!' : 'Those scores were already on the board.');
+    openBoard();
+  } catch (err) {
+    mig.text.textContent = "Couldn't reach the leaderboard. Try again in a bit.";
+    mig.yes.disabled = false; mig.no.disabled = false;
+  }
+});
+mig.no.addEventListener('click', (e) => { e.stopPropagation(); Board.skipMigration(); mig.box.classList.add('hidden'); });
 async function openBoard() {
   boardOpen = true;
   ui.board.classList.remove('hidden');
+  refreshMigrateBanner();
   ui.boardSrc.textContent = (Board.shared ? 'EVERYONE' : 'THIS DEVICE') + ' · TOP ' + C.leaderboardSize;
   boardNote('Loading…');
   let rows;
@@ -2171,6 +2242,8 @@ async function openBoard() {
   });
 }
 function closeBoard() { boardOpen = false; ui.board.classList.add('hidden'); }
+// One-time prompt: phones with scores saved before the board went online get asked once, on the title screen.
+if (Board.pendingLocal().length && Board.migrationState() === '') setTimeout(() => { if (game.state === 'title') openBoard(); }, 600);
 
 async function submitScore() {
   if (ui.lbSubmit.disabled) return;

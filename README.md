@@ -74,7 +74,9 @@ Only one timed effect runs at a time; a new one replaces the old one. Full Cover
 
 After each drive, players can type a name and add their score. **🏆 Leaderboard** on the title and game-over screens shows the top 10.
 
-Until it's set up, the board is **per device**: it lives in that phone's browser storage. To make it **shared by everyone**, connect a free Supabase project (about 5 minutes):
+The board is **shared by everyone**: it's connected to a Supabase project through `leaderboardUrl` / `leaderboardKey` in `CONFIG`. Phones that saved scores before the board went online get asked once whether to add them to the shared board. Duplicates are skipped, and the **Add them** button stays in the board until it's used.
+
+If you blank out those two values, the game falls back to a per-device board. To point it at a different Supabase project (about 5 minutes):
 
 1. Create a free account and a new project at https://supabase.com. Any name and region work.
 2. In the project, open **SQL Editor → New query**, paste this, and click **Run**:

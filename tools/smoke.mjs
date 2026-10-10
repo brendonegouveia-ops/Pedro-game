@@ -451,7 +451,7 @@ async function endRunQuickly(pg) {
   const pl = await lctx.newPage();
   const errs = [];
   pl.on('pageerror', (e) => errs.push(e.message));
-  await pl.goto(pathToFileURL(path.join(root, 'index.html')).href + '?seed=7');
+  await pl.goto(pathToFileURL(path.join(root, 'index.html')).href + '?debug&lbLocal&seed=7');
   await pl.waitForFunction(() => window.__pedro && window.__pedro.ready);
   await endRunQuickly(pl);
   const visible = await pl.isVisible('#lbName');
@@ -529,6 +529,61 @@ async function endRunQuickly(pg) {
     ? ok(`shared board: POST + GET to Supabase REST with correct headers/query/body; shows everyone's scores ("${txt.slice(0, 80)}…")`)
     : fail('shared board: ' + JSON.stringify({ seen, txt }));
   await sctx.close();
+}
+{
+  // One-time upload of scores saved on this phone before the board went online
+  const SB = 'https://test-project.supabase.co', KEY = 'sb_publishable_TESTKEY';
+  const db = [{ name: 'Nick Super V6', score: 20414, miles: 7.02, created_at: '2026-01-01T00:00:00Z' }];   // already shared
+  const posts = [];
+  const mctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await mctx.route(cdnUrl, (route) => route.fulfill({ status: 200, body: localThree, headers: { 'Content-Type': 'application/javascript', 'Access-Control-Allow-Origin': '*' } }));
+  await mctx.route(SB + '/rest/v1/scores**', async (route) => {
+    const req = route.request(), cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS' };
+    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    const u = new URL(req.url());
+    if (req.method() === 'GET') {
+      let rows = [...db];
+      const n = u.searchParams.get('name'), sc = u.searchParams.get('score');
+      if (n) rows = rows.filter((r) => 'eq.' + r.name === n && 'eq.' + r.score === sc);
+      rows.sort((a, b) => b.score - a.score);
+      return route.fulfill({ status: 200, headers: { ...cors, 'Content-Type': 'application/json' }, body: JSON.stringify(rows.slice(0, 10)) });
+    }
+    const body = JSON.parse(req.postData() || '[]');
+    posts.push(body);
+    for (const r of [].concat(body)) db.push({ ...r, created_at: new Date().toISOString() });
+    return route.fulfill({ status: 201, headers: cors, body: '' });
+  });
+  const pm2 = await mctx.newPage();
+  await pm2.addInitScript(() => {
+    if (!localStorage.getItem('seeded')) {
+      localStorage.setItem('seeded', '1');
+      localStorage.setItem('pedro.board', JSON.stringify([
+        { name: 'Nick Super V6', score: 27093, miles: 8.67 }, { name: 'Nick Super V6', score: 23378, miles: 7.58 },
+        { name: 'Nick Super V6', score: 20414, miles: 7.02 }, { name: 'Nick Super V6', score: 20414, miles: 7.02 },
+      ]));
+    }
+  });
+  const q = `?debug&seed=3&lbUrl=${encodeURIComponent(SB)}&lbKey=${KEY}`;
+  await pm2.goto(pathToFileURL(path.join(root, 'index.html')).href + q);
+  await pm2.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  const prompted = await pm2.waitForSelector('#lbMigrate:not(.hidden)', { timeout: 8000 }).then(() => true, () => false);
+  const ptxt = prompted ? await pm2.textContent('#lbMigrateText') : '';
+  prompted && /3 saved scores/.test(ptxt) ? ok(`one-time prompt on first open: "${ptxt}"`) : fail('no migration prompt: ' + ptxt);
+  await pm2.screenshot({ path: path.join(outDir, '15-share-saved-scores.png') });
+  await pm2.click('#lbMigrateYes');
+  await pm2.waitForFunction(() => document.getElementById('lbMigrate').classList.contains('hidden'), null, { timeout: 8000 }).catch(() => {});
+  await pm2.waitForFunction(() => /27,093/.test(document.getElementById('boardList').innerText), null, { timeout: 8000 }).catch(() => {});
+  const uploaded = posts.flat();
+  const list = await pm2.evaluate(() => document.getElementById('boardList').innerText.replace(/\s+/g, ' '));
+  posts.length === 1 && uploaded.length === 2 && uploaded.every((r) => r.name === 'Nick Super V6') && !uploaded.some((r) => r.score === 20414) && /27,093/.test(list) && /23,378/.test(list)
+    ? ok(`uploaded 2 saved scores in one request, skipped the duplicate already on the board; board: "${list.slice(0, 90)}…"`)
+    : fail('migration upload: ' + JSON.stringify({ posts, list }));
+  await pm2.reload();
+  await pm2.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  await sleep(1500);
+  const again = await pm2.isVisible('#boardScreen');
+  !again ? ok('never asks again after sharing') : fail('migration prompt reappeared');
+  await mctx.close();
 }
 
 // --- Mile sign renders near a mile marker ---
