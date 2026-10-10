@@ -99,10 +99,11 @@ s.lane === startLane ? ok(`swipe left: lane -> ${s.lane}`) : fail(`swipe left: e
 await page.waitForFunction(() => !window.__pedro.snapshot().tweening);   // previous swipe settled
 await page.keyboard.press('ArrowRight');
 await page.keyboard.press('ArrowRight');
-await sleep(500);
+const settled = () => page.waitForFunction(() => { const s = window.__pedro.snapshot(); return !s.tweening; }, null, { timeout: 10000 }).catch(() => {});
+await sleep(150); await settled(); await sleep(100); await settled();   // both the move and the buffered move
 s = await snap();
 s.lane === startLane + 2 ? ok(`keyboard ArrowRight x2 (buffered): lane -> ${s.lane}`) : fail(`buffered keys: expected ${startLane + 2}, got ${s.lane}`);
-await page.keyboard.press('a'); await sleep(250);
+await page.keyboard.press('a'); await sleep(100); await settled();
 s = await snap();
 s.lane === startLane + 1 ? ok(`keyboard A: lane -> ${s.lane}`) : fail(`key A: expected ${startLane + 1}, got ${s.lane}`);
 // Clamp at road edge
@@ -208,7 +209,12 @@ async function autopilot(label, query, seconds, expect) {
   while (Date.now() - t0 < seconds * 1000) {
     st = await p2.evaluate(() => window.__pedro.snapshot());
     if (st.state !== 'play') break;
-    if (st.tailWarn && !tw) { tw = st.tailWarn; await p2.screenshot({ path: path.join(outDir, `5-tailgater-${label}.png`) }); }
+    if (st.mirror) {
+      if (!tw) { tw = { first: st.mirror, max: st.mirror, mismatches: 0, checks: 0 }; await p2.screenshot({ path: path.join(outDir, `5-tailgater-${label}.png`) }); }
+      tw.checks++;
+      if (st.mirror.dots !== st.mirror.truth || JSON.stringify(st.mirror.hot) !== JSON.stringify(st.mirror.truthLanes)) tw.mismatches++;
+      if (st.mirror.truth > tw.max.truth) { tw.max = st.mirror; await p2.screenshot({ path: path.join(outDir, `5-tailgaters-${st.mirror.truth}-${label}.png`) }); }
+    }
     await sleep(tw ? 500 : 150);
   }
   st.firstTailWarn = tw;
@@ -228,12 +234,14 @@ if (!QUICK) await autopilot('milestone', '?debug&seed=777&start=9.8', 25, (st) =
   st.nearMisses > 0 ? ok(`near-miss bonus awarded (${st.nearMisses})`) : fail('no near misses recorded');
 });
 if (!QUICK) await autopilot('start', '?debug&seed=4242', 30);
-if (!QUICK) await autopilot('brutal', '?debug&seed=4243&start=12', 30, (st) => {
+if (!QUICK) await autopilot('brutal', '?debug&seed=4243&start=12', 40, (st) => {
   const tw = st.firstTailWarn;
-  if (!tw) { fail('no tailgater warning seen in 30 s at full difficulty'); return; }
-  tw.bottom < tw.carY && tw.top > 0 && tw.left >= 0 && tw.right <= tw.vw && (Math.abs(tw.cx - tw.carX) < 40 || tw.left < 12 || tw.right > tw.vw - 12)
-    ? ok(`tailgater warning sits above the car (bottom ${tw.bottom.toFixed(0)}px < car ${tw.carY.toFixed(0)}px, fully on-screen ${tw.left.toFixed(0)}–${tw.right.toFixed(0)} of ${tw.vw}px): "${tw.text.replace(/\s+/g, ' ')}"`)
-    : fail('tailgater warning misplaced: ' + JSON.stringify(tw));
+  if (!tw) { fail('no tailgater mirror seen in 40 s at full difficulty'); return; }
+  const m = tw.first;
+  m.bottom < m.vh * 0.3 ? ok(`tailgater mirror stays in the top of the screen (bottom ${m.bottom.toFixed(0)}px of ${m.vh}px), off the road`) : fail('mirror too low: ' + JSON.stringify(m));
+  /TAILGATERS/.test(m.label) ? ok(`general alert shown: "${m.label}"`) : fail('mirror label: ' + m.label);
+  tw.mismatches === 0 ? ok(`mirror matched the real tailgaters (dots + lanes) on all ${tw.checks} checks; most at once: ${tw.max.truth} in lane(s) ${tw.max.truthLanes.join(',')}`)
+    : fail(`mirror disagreed with the hazard list on ${tw.mismatches}/${tw.checks} checks`);
 });
 
 // --- Power-ups ---
@@ -341,6 +349,26 @@ async function kamikaze(pg) {
       if (best >= 0) key(best > c.lane ? 'ArrowRight' : 'ArrowLeft');
     })();
   });
+}
+
+// --- Tailgater mirror: several at once, two stacked in one lane ---
+{
+  const pt = await context.newPage();
+  await pt.goto(pathToFileURL(path.join(root, 'index.html')).href + '?debug&seed=21&start=2');
+  await pt.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  await pt.keyboard.press('Enter');
+  await pt.waitForFunction(() => window.__pedro.snapshot().mph > 100, null, { timeout: 15000 });
+  await pt.evaluate(() => window.__pedro.grant(2));   // invincible: this test is about the display
+  const lane = (await pt.evaluate(() => window.__pedro.snapshot())).lane;
+  const other = lane === 3 ? 0 : 3;
+  await pt.evaluate(([a, b]) => window.__pedro.spawnTailgaters([[a, 40], [a, 68], [b, 55]]), [lane, other]);
+  await pt.waitForFunction(() => { const m = window.__pedro.snapshot().mirror; return m && m.dots >= 3; }, null, { timeout: 15000 }).catch(() => {});
+  const m = (await pt.evaluate(() => window.__pedro.snapshot())).mirror;
+  await pt.screenshot({ path: path.join(outDir, '12-mirror-stacked.png') });
+  m && m.dots === 3 && m.hot.includes(lane) && m.hot.includes(other) && m.danger && /×3/.test(m.label)
+    ? ok(`mirror shows 3 tailgaters at once (2 stacked in Pedro's lane ${lane} + lane ${other}), "${m.label}", MOVE! flag on`)
+    : fail('stacked mirror: ' + JSON.stringify(m));
+  await pt.close();
 }
 
 // --- Audio, mute, share ---

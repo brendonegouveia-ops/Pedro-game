@@ -5,6 +5,7 @@
 Endless 3D lane-dodger. Pedro is driving his brand-new silver Jetta to game night, way too fast. Get him **10 miles** to game night before he wrecks it like the last one, then keep going for score.
 
 - **Lives:** Pedro has **3 chouriço links** (bottom-left). Every hit costs one, he says something like "I can fix that", and the Jetta looks more beat-up: scuffs and a cracked window, then duct tape, a smashed taillight and smoke. The third hit ends the run.
+- **Tailgaters:** a rear-view mirror pops up at the top of the screen when they're coming. It has one column per lane with Pedro's car at the top, and each tailgater is a red dot sliding up its lane (several at once, side by side if they share a lane). If one is in your lane, that column flashes and a **MOVE!** tag appears.
 - **Music:** an original synthesized Portuguese *vira*-style folk loop (accordion, oom-pah bass, tambourine) that speeds up with the car.
 - **Phone:** swipe left/right, or tap the left/right half of the screen. Buttons bottom-right: pause, music, sound.
 - **Desktop:** ← → or A / D. P pauses, M mutes everything, N toggles music, Space restarts after a crash.

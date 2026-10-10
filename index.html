@@ -64,20 +64,34 @@
   .stat small { font-size: 10px; letter-spacing: 0.1em; opacity: 0.7; font-weight: 700; }
   .newBest { color: #ffd166; font-weight: 900; letter-spacing: 0.08em; margin-bottom: 10px; animation: pulse 0.8s ease-in-out infinite; }
   .seedline { margin-top: 14px; font-size: 11px; opacity: 0.55; font-variant-numeric: tabular-nums; }
-  /* Tailgater warning: anchored above Pedro's car (positioned each frame from the 3D projection) */
-  #tailWarn { position: fixed; left: 50%; top: 55%; transform: translate(-50%, -100%); pointer-events: none; z-index: 5; }
-  #tailWarn .tw {
-    display: flex; flex-direction: column; align-items: center; gap: 2px;
-    background: #d6141f; color: #fff; border: 3px solid #fff; border-radius: 16px; padding: 7px 14px 8px;
-    font-weight: 900; font-size: 15px; letter-spacing: 0.08em; white-space: nowrap; text-shadow: 0 1px 2px rgba(0,0,0,0.5);
-    box-shadow: 0 6px 22px rgba(0,0,0,0.5), 0 0 26px rgba(255,40,40,0.7); animation: twPulse 0.5s ease-in-out infinite;
+  /* Tailgater rear-view mirror: top of screen (over the sky), shows every tailgater by lane */
+  #mirror { display: flex; flex-direction: column; align-items: center; margin: 8px auto 0; width: max-content; }
+  #mirror .mlabel {
+    display: flex; align-items: center; gap: 6px; background: #d6141f; color: #fff; font-weight: 900; font-size: 12px;
+    letter-spacing: 0.1em; padding: 3px 10px; border-radius: 999px; margin-bottom: -6px; z-index: 1;
+    border: 2px solid #fff; animation: mirrorPulse 0.6s ease-in-out infinite;
   }
-  #tailWarn .tw b { font-size: 22px; letter-spacing: 0.04em; }
-  #tailWarn .tw::after {
-    content: ''; position: absolute; left: calc(50% + var(--dx, 0px)); bottom: -12px; transform: translateX(-50%);
-    border: 9px solid transparent; border-top-color: #fff; border-bottom: 0;
+  #mirror .mlabel em { font-style: normal; background: #fff; color: #d6141f; border-radius: 999px; padding: 0 6px; display: none; }
+  #mirror.danger .mlabel em { display: inline; }
+  #mirror .mglass {
+    position: relative; width: 176px; height: 62px; border-radius: 22px / 26px; overflow: hidden;
+    background: linear-gradient(180deg, rgba(40,48,72,0.92), rgba(18,22,36,0.92));
+    border: 3px solid #c9ced6; box-shadow: 0 4px 14px rgba(0,0,0,0.5), inset 0 2px 6px rgba(255,255,255,0.12);
+    display: grid; grid-template-columns: repeat(4, 1fr);
   }
-  @keyframes twPulse { 50% { transform: scale(1.08); } }
+  #mirror .mlane { border-right: 1px dashed rgba(255,255,255,0.22); transition: background 0.15s; }
+  #mirror .mlane:last-of-type { border-right: 0; }
+  #mirror .mlane.mine { background: rgba(255,255,255,0.08); }
+  #mirror .mlane.hot { background: rgba(255,60,50,0.28); }
+  #mirror .mlane.hot.mine { background: rgba(255,40,30,0.6); animation: laneFlash 0.3s steps(2) infinite; }
+  #mirror .mpedro, #mirror .mdot { position: absolute; left: 0; top: 0; width: 14px; height: 20px; border-radius: 4px; }
+  #mirror .mpedro { background: #d4d8de; border: 2px solid #111; box-sizing: border-box; }
+  #mirror .mdot {
+    background: #ff3b3b; border: 2px solid #fff; box-sizing: border-box; display: none;
+    box-shadow: 0 0 8px rgba(255,60,60,0.9), inset 0 -4px 0 #ffe9a0;
+  }
+  @keyframes mirrorPulse { 50% { transform: scale(1.06); } }
+  @keyframes laneFlash { 50% { background: rgba(255,40,30,0.25); } }
 
   #hudPower { display: flex; justify-content: center; gap: 8px; margin-top: 8px; }
   .power {
@@ -197,6 +211,14 @@
     <div class="pill" id="hudMiles"><small id="hudMilesLabel">TO GAME NIGHT</small><span id="hudMilesVal">3.00 mi</span></div>
     <div class="pill" id="hudSpeed"><small>MPH</small><span id="hudSpeedVal">70</span></div>
   </div>
+  <div id="mirror" class="hidden" aria-label="Tailgaters behind you">
+    <div class="mlabel">⚠ TAILGATERS<span id="mirrorCount"></span><em>MOVE!</em></div>
+    <div class="mglass">
+      <i class="mlane"></i><i class="mlane"></i><i class="mlane"></i><i class="mlane"></i>
+      <i class="mpedro"></i>
+      <i class="mdot"></i><i class="mdot"></i><i class="mdot"></i><i class="mdot"></i><i class="mdot"></i><i class="mdot"></i>
+    </div>
+  </div>
   <div id="hudPower">
     <div class="power hidden" id="hudShield" style="--pc:#3aa0ff"><span class="dot">🛡</span>FULL COVERAGE</div>
     <div class="power hidden" id="hudEffect" style="--pc:#ffd166"><span class="dot" id="hudEffectIcon"></span><span id="hudEffectName"></span><span class="bar"><i id="hudEffectBar"></i></span></div>
@@ -239,7 +261,6 @@
 <div id="confetti"></div>
 <div id="banner" class="hidden"><div class="b1">Pedro made it</div><div class="b2">to game night!</div><small id="bannerSub">+1,000 · keep driving for score</small></div>
 
-<div id="tailWarn" class="hidden"><div class="tw">⚠ TAILGATER<b id="tailWarnDir"></b></div></div>
 
 <button id="pauseBtn" class="iconBtn hidden" type="button" aria-label="Pause">
   <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
@@ -1662,7 +1683,7 @@ const game = {
   crashT: 0,
   overAt: 0,
   spin: 0, slide: 0,
-  tailWarnLane: -9,
+  tgCount: 0, tgLane: new Int8Array(6), tgAhead: new Float32Array(6),
   nearMisses: 0,
   milestoneHit: false,
   shield: false,
@@ -1704,6 +1725,7 @@ function startRun() {
   ui.pauseBtn.classList.remove('hidden');
   ui.lives.classList.remove('hidden');
   hudCache.lives = -1;
+  resetMirror();
   hudCache.score = hudCache.miles = hudCache.mph = -1; hudCache.past = null; hudCache.effect = -2; hudCache.shield = null; hudCache.bar = -1;
 }
 
@@ -1740,7 +1762,7 @@ function gameOver() {
   ui.banner.classList.add('hidden');
   ui.overSeed.textContent = 'Seed ' + game.seed + ' — replay with ?seed=' + game.seed;
   ui.titleBest.textContent = 'Best: ' + bestScore.toLocaleString();
-  ui.tailWarn.classList.add('hidden');
+  ui.mirror.classList.add('hidden');
   ui.slowmoFx.classList.add('hidden'); ui.invulnFx.classList.add('hidden');
   hideSpeech();
   ui.over.classList.remove('hidden');
@@ -1778,7 +1800,9 @@ const ui = {
   speech: $('speech'), speechText: $('speechText'), hitFx: $('hitFx'), musicBtn: $('musicBtn'),
   pauseBtn: $('pauseBtn'), muteBtn: $('muteBtn'), shareBtn: $('shareBtn'), toast: $('toast'),
   overNewBest: $('overNewBest'), overTitle: $('overTitle'), banner: $('banner'), bannerSub: $('bannerSub'),
-  confetti: $('confetti'), floaters: Array.from(document.querySelectorAll('.floater')), overSeed: $('overSeed'), tailWarn: $('tailWarn'), tailWarnDir: $('tailWarnDir'),
+  confetti: $('confetti'), floaters: Array.from(document.querySelectorAll('.floater')), overSeed: $('overSeed'), mirror: $('mirror'), mirrorCount: $('mirrorCount'),
+  mirrorLanes: Array.from(document.querySelectorAll('#mirror .mlane')), mirrorDots: Array.from(document.querySelectorAll('#mirror .mdot')),
+  mirrorPedro: document.querySelector('#mirror .mpedro'),
   score: $('hudScoreVal'), miles: $('hudMilesVal'), milesLabel: $('hudMilesLabel'), speed: $('hudSpeedVal'),
   titleBest: $('titleBest'), debug: $('debugPanel'),
 };
@@ -1969,7 +1993,7 @@ function updateHazards(dtGame, realDt) {
   if (!sp) return;
   const sig = game.sigma, hsc = C.hitboxScale;
   const pHalfW = C.playerSize[0] * hsc / 2, pHalfL = C.playerSize[1] * hsc / 2;
-  let warnAhead = -Infinity, warnLane = -9;
+  let tg = 0;
   const blinkOn = (game.time * 6) % 2 < 1;
   const list = sp.hazards;
   for (let i = 0; i < list.length; i++) {
@@ -1980,7 +2004,9 @@ function updateHazards(dtGame, realDt) {
       if (ahead > C.tailgaterExitAhead) {
         h.fade -= realDt * 3;
         if (h.fade <= 0) { releaseHazard(h); continue; }
-      } else if (ahead < 0 && ahead > -C.tailgaterWarnMeters && ahead > warnAhead && !h.bounced) { warnAhead = ahead; warnLane = h.lane; }
+      } else if (ahead < 0 && ahead > -C.tailgaterWarnMeters && !h.bounced && tg < game.tgLane.length) {
+        game.tgLane[tg] = h.lane; game.tgAhead[tg] = ahead; tg++;
+      }
     } else if (ahead < -C.despawnBehindMeters) { releaseHazard(h); continue; }
     if (h.bounced && Math.abs(h.bx) > 30) { releaseHazard(h); continue; }
 
@@ -2044,7 +2070,7 @@ function updateHazards(dtGame, realDt) {
       }
     }
   }
-  game.tailWarnLane = warnLane;
+  game.tgCount = tg;
 }
 
 function bounceAside(h, hx) {
@@ -2219,29 +2245,51 @@ function hitMilestone() {
   if (window.__pedroAudio) window.__pedroAudio.fanfare();
 }
 
-let tailText = '', tailX = -1, tailY = -1, tailW = 0, tailCarX = -1;
+// Rear-view mirror: one column per lane, Pedro at the top of his lane, each tailgater a red dot
+// that slides up as it closes in (several can show at once, stacking in the same lane).
+const MIRROR_W = 176 - 6, MIRROR_LANE = MIRROR_W / 4;
+const mirrorCache = { shown: false, count: -1, hot: 0, mine: -1, danger: false, dots: new Int16Array(12).fill(-999), pedro: -1 };
+function resetMirror() {
+  game.tgCount = 0;
+  const mc = mirrorCache;
+  mc.shown = false; mc.count = 0; mc.hot = -1; mc.mine = -1; mc.danger = false; mc.pedro = -1; mc.dots.fill(-999);
+  ui.mirror.classList.add('hidden'); ui.mirror.classList.remove('danger');
+  ui.mirrorCount.textContent = '';
+  for (const d of ui.mirrorDots) d.style.display = 'none';
+}
 function updateTailWarn() {
-  const lane = game.state === 'play' ? game.tailWarnLane : -9;
-  const text = lane < 0 ? '' : lane < player.lane ? '◀ LEFT LANE' : lane > player.lane ? 'RIGHT LANE ▶' : '▼ BEHIND YOU ▼';
-  if (text !== tailText) {
-    if (tailText === '' && text !== '') Sfx.horn();
-    tailText = text;
-    ui.tailWarn.classList.toggle('hidden', text === '');
-    ui.tailWarnDir.textContent = text;
-    tailW = text === '' ? 0 : ui.tailWarn.offsetWidth * 1.08;   // room for the pulse
-    tailX = -1;
+  const n = game.state === 'play' ? game.tgCount : 0;
+  const mc = mirrorCache;
+  if (n > mc.count && mc.count >= 0 && n > 0) Sfx.horn();          // a new tailgater entered range
+  if ((n > 0) !== mc.shown) { mc.shown = n > 0; ui.mirror.classList.toggle('hidden', !mc.shown); }
+  if (n !== mc.count) { mc.count = n; ui.mirrorCount.textContent = n > 1 ? ' ×' + n : ''; }
+  if (!mc.shown) return;
+  let hot = 0, danger = false;
+  for (let i = 0; i < n; i++) { hot |= 1 << game.tgLane[i]; if (game.tgLane[i] === player.lane) danger = true; }
+  if (hot !== mc.hot || player.lane !== mc.mine) {
+    for (let l = 0; l < 4; l++) {
+      ui.mirrorLanes[l].classList.toggle('hot', !!(hot & (1 << l)));
+      ui.mirrorLanes[l].classList.toggle('mine', l === player.lane);
+    }
+    mc.hot = hot; mc.mine = player.lane;
   }
-  if (text === '') return;
-  // Keep it just above the car's roof as Pedro changes lanes, clamped on-screen; the pointer still aims at the car
-  _proj.set(player.x, 2.4, 0).project(camera);
-  const carX = Math.round((_proj.x + 1) / 2 * window.innerWidth), y = Math.round((1 - _proj.y) / 2 * window.innerHeight) - 14;
-  const half = tailW / 2 + 8, x = Math.max(half, Math.min(window.innerWidth - half, carX));
-  if (x !== tailX || carX !== tailCarX) {
-    tailX = x; tailCarX = carX;
-    ui.tailWarn.style.left = x + 'px';
-    ui.tailWarn.style.setProperty('--dx', Math.max(-tailW / 2 + 18, Math.min(tailW / 2 - 18, carX - x)) + 'px');
+  if (danger !== mc.danger) { mc.danger = danger; ui.mirror.classList.toggle('danger', danger); }
+  const px = Math.round(player.lane * MIRROR_LANE + MIRROR_LANE / 2 - 7);
+  if (px !== mc.pedro) { mc.pedro = px; ui.mirrorPedro.style.transform = 'translate(' + px + 'px,3px)'; }
+  for (let i = 0; i < ui.mirrorDots.length; i++) {
+    const el = ui.mirrorDots[i];
+    if (i >= n) { if (mc.dots[i * 2] !== -999) { mc.dots[i * 2] = -999; el.style.display = 'none'; } continue; }
+    // tailgaters sharing a lane sit side by side so each one is countable
+    let idx = 0, cnt = 0;
+    for (let j = 0; j < n; j++) if (game.tgLane[j] === game.tgLane[i]) { if (j < i) idx++; cnt++; }
+    const x = Math.round(game.tgLane[i] * MIRROR_LANE + MIRROR_LANE / 2 - 7 + (idx - (cnt - 1) / 2) * 15);
+    const y = Math.round(25 + (-game.tgAhead[i] / C.tailgaterWarnMeters) * 15);   // near → just under Pedro
+    if (mc.dots[i * 2] === -999) el.style.display = 'block';
+    if (x !== mc.dots[i * 2] || y !== mc.dots[i * 2 + 1]) {
+      mc.dots[i * 2] = x; mc.dots[i * 2 + 1] = y;
+      el.style.transform = 'translate(' + x + 'px,' + y + 'px)';
+    }
   }
-  if (y !== tailY) { tailY = y; ui.tailWarn.style.top = y + 'px'; }
 }
 
 // ---------- Debug overlay: guaranteed-open lane per row ----------
@@ -2363,9 +2411,22 @@ window.__pedro = {
     return { state: game.state, lane: player.lane, x: player.x, tweening: player.t < 1, mph: game.mph * speedMult() * worldTimeScale(),
       lives: game.lives, hits: game.hits, damage: player.damageStage, speech: game.lastSpeech || '', lifeLine: game.lifeLine || '',
       livesShown: ui.lifeIcons.filter((e) => !e.classList.contains('gone')).length, music: Sfx.musicInfo(), media: Sfx.mediaInfo(),
-      tailWarn: (() => { const el = document.getElementById('tailWarn'); if (el.classList.contains('hidden')) return null;
-        const r = el.getBoundingClientRect(); _proj.set(player.x, 0.8, 0).project(camera);
-        return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, vw: innerWidth, cx: (r.left + r.right) / 2, carX: (_proj.x + 1) / 2 * innerWidth, carY: (1 - _proj.y) / 2 * innerHeight, text: el.innerText }; })(),
+      mirror: (() => {
+        const el = document.getElementById('mirror');
+        if (el.classList.contains('hidden')) return null;
+        const r = el.getBoundingClientRect();
+        const dots = ui.mirrorDots.filter((d) => d.style.display === 'block').length;
+        const hot = ui.mirrorLanes.map((l, i) => (l.classList.contains('hot') ? i : -1)).filter((i) => i >= 0);
+        // independent count straight from the hazard list
+        let truth = 0; const truthLanes = new Set();
+        for (const h of game.spawner.hazards) {
+          if (!h.active || h.type !== Core.T.TAILGATER || h.bounced) continue;
+          const ahead = (1 - h.k) * (h.sigma - game.sigma);
+          if (ahead < 0 && ahead > -C.tailgaterWarnMeters) { truth++; truthLanes.add(h.lane); }
+        }
+        return { top: r.top, bottom: r.bottom, vh: innerHeight, dots, hot, truth, truthLanes: [...truthLanes].sort(),
+          danger: el.classList.contains('danger'), label: el.querySelector('.mlabel').innerText.replace(/\s+/g, ' ').trim(), lane: player.lane };
+      })(),
       miles: game.sigma / Core.METERS_PER_MILE, score: game.score, seed: game.seed, liveHazards: live,
       rows: game.spawner ? game.spawner.rowCount : 0, roast: game.lastRoast || '',
       nearMisses: game.nearMisses, milestoneHit: game.milestoneHit,
@@ -2381,6 +2442,22 @@ window.__pedro = {
   },
   // ?debug only: grant a power-up (0 Full Coverage, 1 Brake Check, 2 Fresh Detail, 3 Carpool)
   grant(kind) { if (DEBUG && game.state === 'play') applyPower(kind); },
+  // ?debug only: place tailgaters behind Pedro, e.g. [[1, 30], [1, 55], [3, 45]] = [lane, meters behind]
+  spawnTailgaters(list) {
+    if (!DEBUG || !game.spawner) return 0;
+    let made = 0;
+    for (const [lane, dist] of list) {
+      const h = game.spawner.hazards.find((x) => !x.active);
+      if (!h) break;
+      const k = Core.typeK(Core.T.TAILGATER), sz = Core.typeSize(Core.T.TAILGATER);
+      Object.assign(h, { active: true, id: 900000 + made, type: Core.T.TAILGATER, lane, lane2: lane, k, sigma: game.sigma + dist / (k - 1),
+        hs: Core.halfSpan(Core.T.TAILGATER), w: sz[0], l: sz[1], row: -1, color: 0, variant: 0, power: 0,
+        moveStart: Infinity, moveEnd: Infinity, blinkStart: Infinity, vis: null, hit: false, bounced: false, nearMissed: false,
+        minDx: 99, entered: false, lateDodge: false, fade: 1, ry: 0, spin: 0, bx: 0, by: 0, bvx: 0, bvy: 0 });
+      made++;
+    }
+    return made;
+  },
   hudText() { return document.getElementById('hudPower').innerText.replace(/\s+/g, ' ').trim(); },
   renderProbe() {
     renderer.render(scene, camera);
