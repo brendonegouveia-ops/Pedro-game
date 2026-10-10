@@ -58,7 +58,7 @@ function runSeed(seed) {
     R.push({ A: row.A, B: row.B, g: row.g, gPrev: row.gPrev, fallback: row.fallback, count: row.count });
     for (const h of sp.hazards) {
       if (!h.active) continue;
-      if (h.type === 5) { h.active = false; continue; } // power-ups never block
+      if (h.type >= 5) { h.active = false; continue; } // power-ups and coins never block
       const hs = hsOf(h.type);
       H.push({ type: h.type, mask: (1 << h.lane) | (1 << h.lane2), lo: h.sigma - hs, hi: h.sigma + hs, row: h.row });
       h.active = false; // simulate despawn so the pool recycles

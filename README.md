@@ -2,11 +2,17 @@
 
 **Play it:** https://brendonegouveia-ops.github.io/pedro-game/
 
-Endless 3D lane-dodger. Pedro is driving his brand-new silver Jetta to game night, way too fast. Get him **10 miles** to game night before he wrecks it like the last one, then keep going for score.
+Endless 3D lane-dodger. Pedro is driving his brand-new silver Jetta to game night, way too fast. Three goals, one after another:
+
+1. **Mile 10:** make it to game night at Carlson's house. The music drops into dubstep.
+2. **Mile 15:** drop the stranger he met at Dunkin' Donuts off at CVS.
+3. **Mile 20:** drive to Fall River.
+
+After that it's endless, for score. Coins along the road pay extra, and a full trail earns a bonus. Many trails run straight at a car, so grabbing them all means swerving out at the last second.
 
 - **Lives:** Pedro has **3 chouriço links** (bottom-left). Every hit costs one, he says something like "I can fix that", and the Jetta looks more beat-up: scuffs and a cracked window, then duct tape, a smashed taillight and smoke. The third hit ends the run.
 - **Tailgaters:** a rear-view mirror pops up at the top of the screen when they're coming. It has one column per lane with Pedro's car at the top, and each tailgater is a red dot sliding up its lane (several at once, side by side if they share a lane). If one is in your lane, that column flashes and a **MOVE!** tag appears.
-- **Music:** an original synthesized Portuguese *vira*-style folk loop (accordion, oom-pah bass, tambourine) that speeds up with the car.
+- **Music:** an original synthesized Portuguese *corridinho*-style accordion dance (2/4, parallel thirds, musette reeds, oom-pah bass, ferrinhos) that speeds up with the car. At Carlson's house it builds and drops into dubstep (wobble bass, half-time drums).
 - **Phone:** swipe left/right, or tap the left/right half of the screen. Buttons bottom-right: pause, music, sound.
 - **Desktop:** ← → or A / D. P pauses, M mutes everything, N toggles music, Space restarts after a crash.
 - The whole game is the single file `index.html` (Three.js `0.169.0` loads from jsdelivr). There's no build step. It runs from GitHub Pages or straight from disk (`file://`, needs internet for Three.js).
@@ -19,7 +25,8 @@ Everything tunable lives in the `CONFIG` object at the top of the `<script id="p
 |---|---|
 | Start / top speed (mph) | `startSpeedMph` (80), `maxSpeedMph` (165) |
 | How fast it gets hard | `difficultyCurve`, a list of `[miles, 0..1]` points. Default starts at 0.22 (no warm-up) and reaches full brutality at mile 9 (~4 min) |
-| Game-night distance | `milestoneMiles` (default 10), `milestoneBonus` |
+| Goals | `goals`: each has `miles`, the HUD label, the highway-sign text, banner text, bonus, Pedro's line, and optionally `music: 'dubstep'` |
+| Coins | `coinPoints`, `coinTrailBonus`, `coinTrailChance`, `coinTrailMin`/`Max`, `coinRiskyChance`, `coinBailSec` |
 | Lives | `lives` (3), `hitGraceSec` (invulnerable time after a hit) |
 | Speech bubble time | `speechSec` |
 | Music | `musicVolume`, `musicBpm` |
@@ -30,7 +37,7 @@ Everything tunable lives in the `CONFIG` object at the top of the `<script id="p
 | Forgiveness | `hitboxScale` (0.8 = hitboxes are 80% of the visual size), `reactionSec` |
 | Lane-change feel | `laneChangeMs` (150) |
 | Scoring | `pointsPerMeter`, `nearMissPoints`, `nearMissMargin`, `lateDodgeSec` |
-| Power-ups | `powerupChance`, `powerupWeights` (order: Full Coverage, Brake Check, Fresh Detail, Carpool, Donut, Chouriço), `brakeCheckSec`, `freshDetailSec`, `carpoolSec`, `carpoolMultiplier`, `donutSec`, `donutSpeedMult` |
+| Power-ups | `powerupChance`, `powerupBag` (a shuffled deck, order: Full Coverage, Brake Check, Fresh Detail, Donut, Chouriço; default 4/4/3/4/1 = one chouriço per 16 power-ups, never the same one twice in a row), `brakeCheckSec`, `freshDetailSec`, `donutSec`, `donutSpeedMult` |
 | Camera | `fovBase`, `fovMax`, `shakeMax`, `camHeight`, `camBack` |
 | Share link | `shareUrl` |
 
@@ -64,7 +71,6 @@ const ROASTS = [
 | 🛡 **Full Coverage** | Absorbs one crash (blue bubble). |
 | ⏱ **Brake Check** | 4 s of slow motion. |
 | ✨ **Fresh Detail** | 5 s of invincibility. The car glows and traffic bounces aside. |
-| 👥 **Carpool** | 2× score for 8 s. |
 | 🍩 **Donut** | Sugar rush: drive 30% faster for 5 s (more points per second, too). |
 | ❤ **Chouriço** (very rare) | Gives back one chouriço link and repairs one stage of damage. At full links it's worth points instead. |
 
@@ -115,7 +121,7 @@ Both values are designed to be public. The table policies only allow reading sco
 
 Traffic comes in rows from a seeded PRNG (mulberry32). Every row is validated before it is committed: it must leave a **guaranteed-open lane** that Pedro can reach from the previous row's open lane within the clear gap between the rows. Each lane change counts as `laneChangeMs + reactionSec` at the speed Pedro will be doing when he gets there, multiplied by `donutSpeedMult`, so the guarantee holds even mid-donut. Every move also has to leave 1.5 m of spare room. Lane-changers count as blocking both of their lanes, and tailgaters count as blocking theirs. A row that fails is regenerated, up to 8 tries, then replaced with an empty row.
 
-- **Replay a run:** the game-over screen shows its seed. Open `…/pedro-game/?seed=12345` to replay that exact traffic.
+- **Replay a run:** the game-over screen shows its seed. Open `…/pedro-game/?seed=12345` to replay that exact traffic. The seed applies to the first run only; restarting goes back to fresh random runs.
 - **See the guarantee:** add `?debug` to the URL (e.g. `?debug&seed=12345`). A green strip marks each row's guaranteed-open lane, and a panel shows fps, difficulty, and spawner stats. `?debug&start=2.5` starts the run at mile 2.5.
 
 ## Verification tools (`/tools`)

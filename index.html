@@ -31,6 +31,10 @@
   }
   .pill small { display: block; font-size: 10px; font-weight: 700; opacity: 0.7; letter-spacing: 0.08em; }
   #hudScore { font-size: 22px; }
+  .coinLine { font-size: 13px; font-weight: 900; color: #ffd84a; margin-top: 1px; }
+  .coinLine.pop { animation: coinPop 0.25s ease-out; }
+  @keyframes coinPop { 50% { transform: scale(1.35); } }
+  .overCoins { font-weight: 900; color: #ffd84a; margin: -4px 0 12px; font-size: 15px; }
   #hudMiles { font-size: 16px; text-align: center; }
   #hudSpeed { font-size: 22px; text-align: right; }
 
@@ -243,7 +247,7 @@
 
 <div id="hud" class="layer hidden">
   <div class="row">
-    <div class="pill" id="hudScore"><small>SCORE</small><span id="hudScoreVal">0</span></div>
+    <div class="pill" id="hudScore"><small>SCORE</small><span id="hudScoreVal">0</span><div class="coinLine">🪙 <b id="hudCoinsVal">0</b></div></div>
     <div class="pill" id="hudMiles"><small id="hudMilesLabel">TO GAME NIGHT</small><span id="hudMilesVal">3.00 mi</span></div>
     <div class="pill" id="hudSpeed"><small>MPH</small><span id="hudSpeedVal">70</span></div>
   </div>
@@ -268,7 +272,7 @@
 
 <div id="titleScreen" class="layer screen">
   <h1 class="title">Pedro Makes It <span>to Game Night</span></h1>
-  <p class="sub">10 miles to game night. Three chouriço links of life. One brand-new silver Jetta. Same driver.</p>
+  <p class="sub">Game night at Carlson's (10 mi), then the Dunkin' stranger to CVS (15 mi), then Fall River (20 mi). Three chouriço links. One brand-new silver Jetta. Same driver.</p>
   <div class="cta">Tap / press any key to drive</div>
   <div class="best" id="titleBest">Best: 0</div>
   <button class="lbBtn" id="titleLbBtn" type="button">🏆 Leaderboard</button>
@@ -289,6 +293,7 @@
     <div class="stat"><small>DISTANCE</small><b id="overMiles">0.00 mi</b></div>
     <div class="stat"><small>BEST</small><b id="overBest">0</b></div>
   </div>
+  <div class="overCoins" id="overCoins"></div>
   <div class="lb" id="lbForm">
     <div class="lbRow">
       <input id="lbName" type="text" maxlength="16" placeholder="Your name" autocomplete="nickname" autocapitalize="words" enterkeyhint="send" aria-label="Your name for the leaderboard">
@@ -303,7 +308,7 @@
 
 <div id="floaters"><div class="floater"></div><div class="floater"></div><div class="floater"></div><div class="floater"></div><div class="floater"></div></div>
 <div id="confetti"></div>
-<div id="banner" class="hidden"><div class="b1">Pedro made it</div><div class="b2">to game night!</div><small id="bannerSub">+1,000 · keep driving for score</small></div>
+<div id="banner" class="hidden"><div class="b1" id="bannerB1">Pedro made it</div><div class="b2" id="bannerB2">to game night!</div><small id="bannerSub"></small></div>
 
 
 <button id="pauseBtn" class="iconBtn hidden" type="button" aria-label="Pause">
@@ -357,7 +362,18 @@ const CONFIG = {
   // --- Difficulty curve: [miles, difficulty 0..1], linearly interpolated.
   //     Starts at 0.22 (no warm-up), ~0.6 by mile 3, full brutality by mile 9.
   difficultyCurve: [[0, 0.22], [1, 0.4], [3, 0.62], [6, 0.85], [9, 1.0]],
-  milestoneMiles: 10,          // "PEDRO MADE IT TO GAME NIGHT!"
+  // Goals, in order. Reaching one shows its banner, pays its bonus, and the HUD/signs switch to the next.
+  goals: [
+    { miles: 10, hud: 'TO GAME NIGHT', sign: 'GAME NIGHT', bonus: 3000, music: 'dubstep',
+      banner: ['Pedro made it', 'to game night!'], sub: "Carlson's house", next: "Drop the Dunkin' stranger at CVS",
+      line: 'Carlson! Turn it UP 🔊', share: 'game night', wrecked: 'Made it to game night… then wrecked' },
+    { miles: 15, hud: 'DROP-OFF AT CVS', sign: 'CVS', bonus: 5000,
+      banner: ["Dunkin' stranger", 'dropped at CVS!'], sub: 'Mission accomplished', next: 'Drive to Fall River',
+      line: 'Bro, I never even got his name', share: 'CVS (the Dunkin\' stranger says thanks)', wrecked: 'Dropped him at CVS… then wrecked' },
+    { miles: 20, hud: 'TO FALL RIVER', sign: 'FALL RIVER', bonus: 8000,
+      banner: ['Pedro made it', 'to Fall River!'], sub: 'Legend status', next: 'Keep driving for score',
+      line: "Fall River, we're SO back", share: 'Fall River', wrecked: 'Made it to Fall River… then wrecked' },
+  ],
 
   // --- Camera ---
   fovBase: 62,
@@ -417,22 +433,32 @@ const CONFIG = {
   nearMissPoints: 50,          // "+50 CLOSE CALL"
   nearMissMargin: 0.6,         // visual side clearance (meters) that counts as a close call
   lateDodgeSec: 0.3,           // leaving a car's lane this soon before it reaches Pedro also counts
-  milestoneBonus: 3000,        // awarded on reaching milestoneMiles
-  bannerSec: 4,                // how long the game-night banner stays up
+  bannerSec: 4.5,              // how long a goal banner stays up
+
+  // --- Coins (non-blocking pickups; trails often lead toward a car, so grabbing them all is risky) ---
+  coinPoints: 10,              // per coin
+  coinTrailBonus: 50,          // for collecting every coin in a trail
+  coinTrailChance: 0.35,       // chance per spawn row of a trail in the gap before it
+  coinTrailMin: 3,
+  coinTrailMax: 6,
+  coinSpacingMeters: 7,        // distance between coins in a trail (along Pedro's path)
+  coinRiskyChance: 0.6,        // chance the trail runs straight at a car you'll have to dodge at the last second
+  coinBailSec: 0.35,           // the last coin before a car leaves this long to swerve out
+  coinMinMiles: 0.1,
 
   // --- Power-ups (spawn in open lanes; never count as blockers) ---
   powerupChance: 0.09,         // chance per spawn row
   powerupMinMiles: 0.2,        // none before this distance
   powerupMinGapMeters: 450,    // minimum spacing between power-ups
-  // Full Coverage, Brake Check, Fresh Detail, Carpool, Donut, Chouriço (very rare: +1 life)
-  powerupWeights: [1, 1, 0.8, 1, 1.1, 0.15],
+  // Shuffle bag: power-ups are dealt from a deck holding this many of each, without replacement
+  // (refilled when empty), so every 16 power-ups contain exactly one chouriço and no kind repeats back to back.
+  // Order: Full Coverage, Brake Check, Fresh Detail, Donut, Chouriço (+1 life)
+  powerupBag: [4, 4, 3, 4, 1],
   donutSec: 5,                 // Donut speed-boost duration
   donutSpeedMult: 1.3,         // speed multiplier while boosted (fairness validates rows at this speed)
   brakeCheckSec: 4,            // slow-motion duration (real seconds)
   brakeCheckScale: 0.5,        // world time scale during Brake Check
   freshDetailSec: 5,           // invincibility duration
-  carpoolSec: 8,               // score multiplier duration
-  carpoolMultiplier: 2,
   plowPoints: 25,              // points per car plowed aside during Fresh Detail
   shieldGraceSec: 1.0,         // invulnerability after Full Coverage absorbs a crash
 
@@ -458,6 +484,7 @@ const CONFIG = {
   masterVolume: 0.7,
   musicVolume: 0.22,           // background music level (relative to master)
   musicBpm: 126,               // quarter-note beats per minute of the corridinho loop (2/4)
+  dubstepBpm: 140,             // after game night (Carlson's house) the music drops into dubstep
 };
 
 // Game-over roast lines. {miles} and {score} are substituted.
@@ -575,8 +602,8 @@ const PedroCore = (() => {
   // with speed fraction k is at world distance (1-k)*(sigma_h - sigma) ahead of Pedro,
   // so its position is an exact function of sigma — rows stay rigid as speed changes,
   // and each hazard blocks its lane(s) for the sigma interval [sigma_h - hs, sigma_h + hs].
-  const T = { SEDAN: 0, TRUCK: 1, DEBRIS: 2, CHANGER: 3, TAILGATER: 4, POWERUP: 5 };
-  const TYPE_NAMES = ['sedan', 'truck', 'debris', 'changer', 'tailgater', 'powerup'];
+  const T = { SEDAN: 0, TRUCK: 1, DEBRIS: 2, CHANGER: 3, TAILGATER: 4, POWERUP: 5, COIN: 6 };
+  const TYPE_NAMES = ['sedan', 'truck', 'debris', 'changer', 'tailgater', 'powerup', 'coin'];
 
   function typeK(type) {
     if (type === T.DEBRIS) return 0;
@@ -584,7 +611,9 @@ const PedroCore = (() => {
     return CONFIG.trafficSpeedFrac;
   }
   function typeSize(type) {
-    return type === T.POWERUP ? [1.6, 1.6] : CONFIG.hazardSize[TYPE_NAMES[type]];
+    if (type === T.POWERUP) return [1.6, 1.6];
+    if (type === T.COIN) return [1.0, 1.0];
+    return CONFIG.hazardSize[TYPE_NAMES[type]];
   }
   // Half-length (in sigma) of the interval during which this hazard's hitbox overlaps Pedro's.
   function halfSpan(type) {
@@ -630,7 +659,7 @@ const PedroCore = (() => {
   // A row that fails is regenerated; after maxRowAttempts it becomes an empty row.
   function createSpawner(seed, startLane, startSigma) {
     const rng = mulberry32(seed);
-    const POOL = 192, ROWS = 48, RECENT = 96;
+    const POOL = 320, ROWS = 48, RECENT = 96;
     const hazards = [];
     for (let i = 0; i < POOL; i++) hazards.push({
       active: false, id: 0, type: 0, lane: 0, lane2: 0, k: 0, sigma: 0, hs: 0, w: 0, l: 0, row: 0, color: 0, variant: 0,
@@ -651,10 +680,25 @@ const PedroCore = (() => {
 
     const st = {
       seed, rng, hazards, rows, rowCount: 0, lastB: (startSigma || 0) + CONFIG.startClearMeters, lastG: startLane,
-      fallbacks: 0, retries: 0, nextId: 1, lastPowerSigma: -Infinity,
+      fallbacks: 0, retries: 0, nextId: 1, lastPowerSigma: -Infinity, nextTrail: 1,
       horizon: CONFIG.spawnAheadMeters / (1 - CONFIG.trafficSpeedFrac),
     };
 
+    // Power-up shuffle bag (see CONFIG.powerupBag)
+    const bag = [];
+    let lastKind = -1;
+    function drawPower() {
+      if (!bag.length) { const Bk = CONFIG.powerupBag; for (let k = 0; k < Bk.length; k++) for (let j = 0; j < Bk[k]; j++) bag.push(k); }
+      let i = Math.floor(rng() * bag.length);
+      if (bag[i] === lastKind) {                       // no back-to-back repeats when the bag allows it
+        const start = Math.floor(rng() * bag.length);
+        for (let j = 0; j < bag.length; j++) { const c = (start + j) % bag.length; if (bag[c] !== lastKind) { i = c; break; } }
+      }
+      const k = bag[i];
+      bag[i] = bag[bag.length - 1]; bag.pop();
+      lastKind = k;
+      return k;
+    }
     function pickBlockedCount(d) {
       const a = CONFIG.rowLanesBlocked[0], b = CONFIG.rowLanesBlocked[1];
       const p1 = lerp(a[0], b[0], d), p2 = lerp(a[1], b[1], d), p3 = lerp(a[2], b[2], d);
@@ -771,7 +815,7 @@ const PedroCore = (() => {
       }
       // Power-up (non-blocking) in an open lane, preferring the guaranteed one
       const miles2 = A / METERS_PER_MILE;
-      const rollP = rng(), rollLane = rng(), rollKind = rng();
+      const rollP = rng(), rollLane = rng();
       if (miles2 >= CONFIG.powerupMinMiles && A - st.lastPowerSigma >= CONFIG.powerupMinGapMeters && rollP < CONFIG.powerupChance) {
         let lane = g;
         if (rollLane > 0.6) {
@@ -782,11 +826,7 @@ const PedroCore = (() => {
         const sigmaP = count ? (A + B) / 2 : A;
         const h = ghostOk(T.POWERUP, 1 << lane, sigmaP) ? allocHazard() : null;
         if (h) {
-          const W = CONFIG.powerupWeights;
-          let total = 0;
-          for (let i = 0; i < W.length; i++) total += W[i];
-          let r = rollKind * total, kind = 0;
-          while (kind < W.length - 1 && r >= W[kind]) { r -= W[kind]; kind++; }
+          const kind = drawPower();
           const sz = typeSize(T.POWERUP);
           h.active = true; h.id = st.nextId++; h.type = T.POWERUP; h.lane = lane; h.lane2 = lane;
           h.k = typeK(T.POWERUP); h.sigma = sigmaP; h.hs = halfSpan(T.POWERUP); h.w = sz[0]; h.l = sz[1];
@@ -797,6 +837,43 @@ const PedroCore = (() => {
           rType[rHead] = T.POWERUP; rLaneMask[rHead] = 1 << lane; rSigma[rHead] = sigmaP;
           rHead = (rHead + 1) % RECENT; if (rCount < RECENT) rCount++;
           st.lastPowerSigma = A;
+        }
+      }
+
+      // Coin trail in the clear gap before this row. Risky trails run straight at a car in this row
+      // (next to an open lane), ending just early enough to swerve out at the last second.
+      if (miles2 >= CONFIG.coinMinMiles && rng() < CONFIG.coinTrailChance) {
+        const spc = CONFIG.coinSpacingMeters;
+        const bail = (CONFIG.playerSize[1] + typeSize(T.COIN)[1]) / 2 / (1 - typeK(T.COIN)) + vA * CONFIG.coinBailSec;
+        let n = CONFIG.coinTrailMin + Math.floor(rng() * (CONFIG.coinTrailMax - CONFIG.coinTrailMin + 1));
+        n = Math.min(n, Math.floor((gapSigma - bail - 2) / spc) + 1);
+        const riskyRoll = rng(), laneRoll = rng();
+        if (n >= 2) {
+          let lane = -1;
+          if (mask && riskyRoll < CONFIG.coinRiskyChance) {
+            let nc = 0;     // blocked lanes that have an open neighbour to bail into
+            for (let l = 0; l < CONFIG.lanes; l++) {
+              if (!(mask & (1 << l))) continue;
+              const okL = l > 0 && !(mask & (1 << (l - 1))), okR = l < CONFIG.lanes - 1 && !(mask & (1 << (l + 1)));
+              if (okL || okR) openLanes[nc++] = l;
+            }
+            if (nc) lane = openLanes[Math.floor(laneRoll * nc)];
+          }
+          if (lane < 0) lane = Math.floor(laneRoll * CONFIG.lanes);
+          const end = A - bail, trail = st.nextTrail++;
+          for (let i = 0; i < n; i++) {
+            const sc = end - (n - 1 - i) * spc;
+            if (!ghostOk(T.COIN, 1 << lane, sc)) continue;
+            const h = allocHazard();
+            if (!h) break;
+            const sz = typeSize(T.COIN);
+            h.active = true; h.id = st.nextId++; h.type = T.COIN; h.lane = lane; h.lane2 = lane;
+            h.k = typeK(T.COIN); h.sigma = sc; h.hs = halfSpan(T.COIN); h.w = sz[0]; h.l = sz[1];
+            h.row = st.rowCount; h.color = n; h.variant = trail; h.power = i;
+            h.moveStart = h.moveEnd = h.blinkStart = Infinity;
+            h.vis = null; h.hit = false; h.bounced = false; h.nearMissed = true; h.minDx = 99; h.entered = false; h.lateDodge = false;
+            h.fade = 1; h.ry = 0; h.spin = 0; h.bx = 0; h.by = 0; h.bvx = 0; h.bvy = 0;
+          }
         }
       }
 
@@ -1294,12 +1371,11 @@ const pools = {
   }),
 };
 // Power-up tokens
-const POWER = { COVERAGE: 0, BRAKE: 1, DETAIL: 2, CARPOOL: 3, DONUT: 4, CHOURICO: 5 };
+const POWER = { COVERAGE: 0, BRAKE: 1, DETAIL: 2, DONUT: 3, CHOURICO: 4 };
 const POWER_INFO = [
   { name: 'FULL COVERAGE', color: 0x3aa0ff, css: '#3aa0ff', icon: '🛡' },
   { name: 'BRAKE CHECK', color: 0xff3b3b, css: '#ff4b4b', icon: '⏱' },
   { name: 'FRESH DETAIL', color: 0xffd166, css: '#ffd166', icon: '✨' },
-  { name: 'CARPOOL 2×', color: 0x2fd27a, css: '#2fd27a', icon: '👥' },
   { name: 'DONUT RUSH', color: 0xff7eb6, css: '#ff7eb6', icon: '🍩' },
   { name: 'CHOURIÇO +1', color: 0xff5a36, css: '#ff6a45', icon: '❤' },
 ];
@@ -1325,11 +1401,6 @@ function buildPowerIcons() {
     merge([part(extrudeShape(shield, 0.2), 0x3aa0ff), part(box(0.14, 0.7, 0.24), 0xffffff, 0, 0.02, 0), part(box(0.6, 0.14, 0.24), 0xffffff, 0, 0.12, 0)]),
     merge([part(cyl(0.6, 0.6, 0.18, 8), 0xff3b3b, 0, 0, 0, Math.PI / 2, Math.PI / 8, 0), part(box(0.7, 0.18, 0.22), 0xffffff, 0, 0, 0)]),
     merge([part(extrudeShape(starShape(5, 0.68, 0.3), 0.22), 0xffd166), part(extrudeShape(starShape(4, 0.28, 0.08), 0.26), 0xffffff, 0.55, 0.5, 0)]),
-    merge([
-      part(new THREE.TorusGeometry(0.58, 0.09, 6, 16), 0x2fd27a),
-      part(new THREE.SphereGeometry(0.16, 8, 6), 0xffffff, -0.2, 0.2, 0), part(cyl(0.12, 0.17, 0.36, 8), 0xffffff, -0.2, -0.13, 0),
-      part(new THREE.SphereGeometry(0.16, 8, 6), 0xffffff, 0.2, 0.2, 0), part(cyl(0.12, 0.17, 0.36, 8), 0xffffff, 0.2, -0.13, 0),
-    ]),
     buildDonut(),
     buildChourico(),
   ];
@@ -1376,6 +1447,36 @@ pools.power = makePool(5, () => {
     update(h, dt) { this.t += dt; icon.rotation.y = this.t * 2.4; icon.position.y = 1.3 + Math.sin(this.t * 3) * 0.18; aura.lookAt(camera.position); },
   };
 });
+
+// Coins: one instanced mesh (a single draw call for every coin on screen)
+const COIN_MAX = 80;
+const coinMesh = (() => {
+  const g = merge([
+    part(cyl(0.44, 0.44, 0.1, 18), 0xe8a810, 0, 0, 0, Math.PI / 2, 0, 0),
+    part(cyl(0.32, 0.32, 0.12, 18), 0xffd84a, 0, 0, 0, Math.PI / 2, 0, 0),
+    part(box(0.1, 0.36, 0.13), 0xfff3b0, 0, 0, 0),
+  ]);
+  const m = new THREE.InstancedMesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, emissive: 0x4a3000 }), COIN_MAX);
+  m.frustumCulled = false;
+  m.count = 0;
+  scene.add(m);
+  return m;
+})();
+const _coinQ = new THREE.Quaternion(), _coinE = new THREE.Euler(), _coinP = new THREE.Vector3(), _coinS = new THREE.Vector3(1, 1, 1), _coinM = new THREE.Matrix4();
+let coinCount = 0;
+function collectCoin(h) {
+  releaseHazard(h);
+  game.coins++;
+  game.score += C.coinPoints;
+  if (h.variant !== game.trail) { game.trail = h.variant; game.trailGot = 0; }
+  game.trailGot++;
+  Sfx.coin(game.trailGot);
+  ui.hudCoins.parentNode.classList.remove('pop'); void ui.hudCoins.offsetWidth; ui.hudCoins.parentNode.classList.add('pop');
+  if (game.trailGot === h.color) {
+    game.score += C.coinTrailBonus;
+    floatText('+' + (C.coinTrailBonus + C.coinPoints * h.color) + ' FULL TRAIL', '#ffd84a');
+  }
+}
 
 function poolFor(type) {
   if (type === T.TRUCK) return pools.truck;
@@ -1473,6 +1574,7 @@ const Sfx = (() => {
   let muted = store.get('pedro.muted', '0') === '1';
   let musicOn = store.get('pedro.music', '1') === '1';
   let musicGain = null, musicTimer = 0, step = 0, nextTime = 0, rate = 1, notes = 0, paused = false;
+  let style = 'folk', dstep = 0, buildEnd = 0;
   const STEPS = MUSIC.melody.length * 8;
   const melodyAt = new Array(STEPS).fill(null), thirdAt = new Array(STEPS).fill(0);
   {
@@ -1565,11 +1667,100 @@ const Sfx = (() => {
     g.gain.setValueAtTime(peak, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
     o.connect(g); g.connect(musicGain); o.start(t); o.stop(t + 0.2);
   }
+  // ---- dubstep (after game night at Carlson's): half-time drums + LFO wobble bass ----
+  function noiseVoice(t, dur, type, freq, q, peak) {
+    const src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    src.buffer = noise; f.type = type; f.frequency.value = freq; f.Q.value = q;
+    g.gain.setValueAtTime(peak, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(f); f.connect(g); g.connect(musicGain); src.start(t, Math.random() * 0.5); src.stop(t + dur + 0.02);
+  }
+  function kick(t, peak) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'sine'; o.frequency.setValueAtTime(170, t); o.frequency.exponentialRampToValueAtTime(42, t + 0.2);
+    g.gain.setValueAtTime(peak, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
+    o.connect(g); g.connect(musicGain); o.start(t); o.stop(t + 0.34);
+  }
+  function snare(t, peak) {
+    noiseVoice(t, 0.2, 'bandpass', 1900, 0.7, peak);
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'triangle'; o.frequency.setValueAtTime(220, t); o.frequency.exponentialRampToValueAtTime(150, t + 0.08);
+    g.gain.setValueAtTime(peak * 0.6, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+    o.connect(g); g.connect(musicGain); o.start(t); o.stop(t + 0.12);
+  }
+  // segments: [[startStep, lfoHz], ...]; chops: [[fromStep, toStep], ...] muted
+  function wobble(t, m, six, segs, chops) {
+    const f = hz(m), dur = 16 * six;
+    const lp = ctx.createBiquadFilter(), g = ctx.createGain(), lfo = ctx.createOscillator(), depth = ctx.createGain();
+    lp.type = 'lowpass'; lp.frequency.value = 420; lp.Q.value = 9;
+    lfo.type = 'sine'; depth.gain.value = 1100;
+    for (const [st, rateHz] of segs) lfo.frequency.setValueAtTime(rateHz, t + st * six);
+    lfo.connect(depth); depth.connect(lp.frequency);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.16, t + 0.02);
+    for (const [a, b] of chops) { g.gain.setValueAtTime(0.0001, t + a * six); g.gain.setValueAtTime(0.16, t + b * six); }
+    g.gain.setValueAtTime(0.16, t + dur - 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    for (const [type, mul, cents, lvl] of [['sawtooth', 1, 0, 1], ['sawtooth', 1, 12, 0.8], ['square', 0.5, 0, 0.6]]) {
+      const o = ctx.createOscillator(), og = ctx.createGain();
+      o.type = type; o.frequency.value = f * mul; o.detune.value = cents; og.gain.value = lvl;
+      o.connect(og); og.connect(lp); o.start(t); o.stop(t + dur + 0.02);
+    }
+    const sub = ctx.createOscillator(), sg = ctx.createGain();          // clean sub for headphones
+    sub.type = 'sine'; sub.frequency.value = f / 2; sg.gain.value = 0.5;
+    sub.connect(sg); sg.connect(g);
+    lp.connect(g); g.connect(musicGain);
+    lfo.start(t); lfo.stop(t + dur + 0.02); sub.start(t); sub.stop(t + dur + 0.02);
+  }
+  function stab(t, notes, dur, peak) {
+    const g = ctx.createGain(), lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 3500;
+    g.gain.setValueAtTime(peak, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    for (const m of notes) for (const c of [-8, 8]) {
+      const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = hz(m); o.detune.value = c;
+      o.connect(lp); o.start(t); o.stop(t + dur + 0.02);
+    }
+    lp.connect(g); g.connect(musicGain);
+  }
+  function riser(t, dur) {
+    const src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    src.buffer = noise; src.loop = true; f.type = 'bandpass'; f.Q.value = 2;
+    f.frequency.setValueAtTime(300, t); f.frequency.exponentialRampToValueAtTime(9000, t + dur);
+    g.gain.setValueAtTime(0.01, t); g.gain.exponentialRampToValueAtTime(0.3, t + dur);
+    g.gain.setValueAtTime(0.0001, t + dur + 0.01);
+    src.connect(f); f.connect(g); g.connect(musicGain); src.start(t); src.stop(t + dur + 0.05);
+  }
+  const DUB = {
+    notes: [40, 40, 43, 38],                       // E2 E2 G2 D2 (one per bar)
+    // LFO rates at 140 bpm: quarter 2.33 Hz, eighth 4.67, eighth-triplet 7.0, sixteenth 9.33
+    segs: [[[0, 4.67], [8, 9.33], [12, 7.0]], [[0, 2.33], [4, 4.67], [8, 9.33]], [[0, 4.67], [4, 7.0], [8, 4.67], [12, 9.33]], [[0, 9.33], [8, 7.0], [12, 2.33]]],
+    chops: [[], [[6, 8]], [], [[14, 16]]],
+  };
+  function scheduleDub(playing) {
+    const six = 60 / (C.dubstepBpm * 4);
+    if (playing) {
+      if (nextTime < buildEnd - 0.001) {
+        // the build: snare roll climbing in volume into the drop
+        const k = 1 - (buildEnd - nextTime) / (16 * six);
+        snare(nextTime, 0.05 + k * 0.25);
+        if (buildEnd - nextTime <= six + 0.001) noiseVoice(buildEnd, 1.6, 'highpass', 4000, 0.5, 0.35);   // crash on the drop
+      } else {
+        const bar = Math.floor(dstep / 16), pos = dstep % 16;
+        if (pos === 0) wobble(nextTime, DUB.notes[bar], six, DUB.segs[bar], DUB.chops[bar]);
+        if (pos === 0 || (pos === 10 && bar % 2 === 1)) kick(nextTime, 0.9);
+        if (pos === 8) snare(nextTime, 0.42);
+        if (pos % 4 === 2) noiseVoice(nextTime, 0.035, 'highpass', 8000, 0.7, 0.09);
+        if (pos === 15 || pos === 11) noiseVoice(nextTime, 0.025, 'highpass', 9000, 0.7, 0.05);
+        if ((bar === 0 || bar === 2) && (pos === 0 || pos === 3 || pos === 6)) stab(nextTime, [64, 67, 71], 0.13, 0.05);
+        if (pos === 0) notes++;
+        dstep = (dstep + 1) % 64;
+      }
+    }
+    nextTime += six;
+  }
   function scheduleMusic() {
     if (!ctx || ctx.state !== 'running') return;
     if (nextTime < ctx.currentTime - 0.25) nextTime = ctx.currentTime + 0.05;   // resumed after a stall
     const playing = musicOn && !muted && !paused;
     while (nextTime < ctx.currentTime + 0.14) {
+      if (style === 'dubstep') { scheduleDub(playing); continue; }
       const six = 60 / (C.musicBpm * 4) / rate;          // one sixteenth note
       if (playing) {
         const bar = Math.floor(step / 8), pos = step % 8, h = MUSIC.harmony[MUSIC.chords[bar]];
@@ -1715,7 +1906,24 @@ const Sfx = (() => {
       store.set('pedro.music', on ? '1' : '0');
       if (musicGain) musicGain.gain.setTargetAtTime(on ? C.musicVolume : 0, ctx.currentTime, 0.05);
     },
-    musicInfo() { return { on: musicOn, notes }; },
+    musicInfo() { return { on: musicOn, notes, style }; },
+    style() { return style; },
+    // 'folk' | 'dubstep'. Switching to dubstep mid-run plays a one-bar build into the drop.
+    setStyle(next, immediate) {
+      if (next === style) return;
+      style = next; dstep = 0; step = 0;
+      if (next === 'dubstep' && !immediate && ctx && ctx.state === 'running' && musicOn && !muted) {
+        const six = 60 / (C.dubstepBpm * 4), t0 = Math.max(nextTime, ctx.currentTime + 0.05);
+        buildEnd = t0 + 16 * six;
+        riser(t0, 16 * six);
+      } else buildEnd = 0;
+    },
+    coin(n) {
+      if (!live()) return;
+      const t = ctx.currentTime, up = Math.pow(2, Math.min(n - 1, 7) / 12);   // climbs a semitone per coin in a trail
+      tone(t, 'square', 1318.5 * up, 1318.5 * up, 0.05, 0.07);
+      tone(t + 0.05, 'square', 1975.5 * up, 1975.5 * up, 0.1, 0.07);
+    },
     state() { return ctx ? ctx.state : 'none'; },
   };
 })();
@@ -1742,30 +1950,35 @@ const signs = (() => {
   group.add(beam, panel);
   group.visible = false;
   scene.add(group);
-  let index = 0, atSigma = 0;
-  function draw(n) {
+  let mile = 0, atSigma = 0;
+  function draw(mi) {
     g2.fillStyle = '#1d7a45'; g2.fillRect(0, 0, 512, 160);
     g2.strokeStyle = '#f2f2f2'; g2.lineWidth = 6; g2.strokeRect(8, 8, 496, 144);
     g2.fillStyle = '#ffffff'; g2.textAlign = 'center'; g2.textBaseline = 'middle';
-    const line2 = n < 0 ? (-n) + (n === -1 ? ' MILE' : ' MILES') : n === 0 ? 'EXIT NOW →' : n + (n === 1 ? ' MI BEHIND YOU' : ' MI BEHIND YOU');
+    // sign at mile `mi` points at the next goal at or beyond it
+    let goal = null;
+    for (const gl of C.goals) if (gl.miles >= mi) { goal = gl; break; }
+    const last = C.goals[C.goals.length - 1];
+    const line1 = goal ? goal.sign : last.sign;
+    const d = goal ? goal.miles - mi : mi - last.miles;
+    const line2 = goal ? (d === 0 ? 'EXIT NOW →' : d + (d === 1 ? ' MILE' : ' MILES')) : d + ' MI BEHIND YOU';
     g2.font = '900 54px -apple-system, Helvetica, Arial, sans-serif';
-    g2.fillText('GAME NIGHT', 256, 58);
+    g2.fillText(line1, 256, 58);
     g2.font = '800 40px -apple-system, Helvetica, Arial, sans-serif';
     g2.fillText(line2, 256, 116);
     tex.needsUpdate = true;
   }
   function place(fromSigma) {
-    // signs at milestone + n miles (n integer), skipping any within ~0.3 mi of the start
-    const m = C.milestoneMiles, startMiles = fromSigma / Core.METERS_PER_MILE;
-    index = Math.ceil(startMiles + (C.fogFar + 15) / Core.METERS_PER_MILE - m);
-    atSigma = (m + index) * Core.METERS_PER_MILE;
-    draw(index);
+    // a sign at every whole mile, skipping any that would pop in inside the fog
+    mile = Math.ceil(fromSigma / Core.METERS_PER_MILE + (C.fogFar + 15) / Core.METERS_PER_MILE);
+    atSigma = mile * Core.METERS_PER_MILE;
+    draw(mile);
   }
   return {
     reset(fromSigma) { place(fromSigma); },
     update(sigma) {
       const z = -(atSigma - sigma);
-      if (z > 30) { index++; atSigma = (C.milestoneMiles + index) * Core.METERS_PER_MILE; draw(index); return; }
+      if (z > 30) { mile++; atSigma = mile * Core.METERS_PER_MILE; draw(mile); return; }
       group.visible = z > -C.fogFar - 20;
       group.position.z = z;
     },
@@ -1787,6 +2000,7 @@ const START_SIGMA = (() => {
   return DEBUG && Number.isFinite(v) && v > 0 ? v * Core.METERS_PER_MILE : 0;
 })();
 
+let urlSeedUsed = false;
 const game = {
   state: 'title',        // title | play | crashing | over | paused
   prevState: 'title',
@@ -1801,7 +2015,8 @@ const game = {
   spin: 0, slide: 0,
   tgCount: 0, tgLane: new Int8Array(6), tgAhead: new Float32Array(6),
   nearMisses: 0,
-  milestoneHit: false,
+  goal: 0,               // index of the next goal (C.goals.length = all done)
+  coins: 0, trail: 0, trailGot: 0,
   shield: false,
   effect: -1, effectT: 0, effectDur: 1,
   invulnT: 0,
@@ -1817,10 +2032,19 @@ function releaseAllHazards() {
 
 function resetRun() {
   releaseAllHazards();
-  game.seed = URL_SEED !== null ? URL_SEED : (Math.random() * 4294967296) >>> 0;
+  // ?seed=N replays that exact run once; restarts get fresh randomness again
+  game.seed = URL_SEED !== null && !urlSeedUsed ? URL_SEED : (Math.random() * 4294967296) >>> 0;
+  if (URL_SEED !== null) urlSeedUsed = true;
   game.spawner = Core.createSpawner(game.seed, C.startLane, START_SIGMA);
   game.sigma = START_SIGMA; game.time = 0; game.score = 0; game.crashT = 0; game.spin = 0; game.slide = 0;
-  game.nearMisses = 0; game.milestoneHit = false; game.laneLeftAt.fill(-99);
+  game.nearMisses = 0; game.laneLeftAt.fill(-99);
+  game.coins = 0; game.trail = 0; game.trailGot = 0;
+  // ?debug&start=N: goals already behind the start count as reached (no banner spam)
+  game.goal = 0;
+  while (game.goal < C.goals.length && C.goals[game.goal].miles * Core.METERS_PER_MILE <= START_SIGMA) game.goal++;
+  let style = 'folk';
+  for (let i = 0; i < game.goal; i++) if (C.goals[i].music) style = C.goals[i].music;
+  Sfx.setStyle(style, true);
   game.shield = false; game.effect = -1; game.effectT = 0; game.invulnT = 0; game.plowed = 0; game.powerups = 0;
   game.lives = C.lives; game.hits = 0; game.shakeT = 0;
   setDamage(0);
@@ -1842,7 +2066,7 @@ function startRun() {
   ui.lives.classList.remove('hidden');
   hudCache.lives = -1;
   resetMirror();
-  hudCache.score = hudCache.miles = hudCache.mph = -1; hudCache.past = null; hudCache.effect = -2; hudCache.shield = null; hudCache.bar = -1;
+  hudCache.score = hudCache.miles = hudCache.mph = -1; hudCache.past = null; hudCache.coins = -1; hudCache.effect = -2; hudCache.shield = null; hudCache.bar = -1;
 }
 
 function crash(h, hx) {
@@ -1874,9 +2098,10 @@ function gameOver() {
   ui.overMiles.textContent = miles.toFixed(2) + ' mi';
   ui.overBest.textContent = bestScore.toLocaleString();
   ui.overNewBest.classList.toggle('hidden', !isBest);
-  ui.overTitle.textContent = game.milestoneHit ? 'Made it… then wrecked' : 'Wrecked';
+  ui.overTitle.textContent = game.goal > 0 ? C.goals[game.goal - 1].wrecked : 'Wrecked';
+  ui.overCoins.textContent = '🪙 ' + game.coins + (game.coins === 1 ? ' coin' : ' coins');
   ui.banner.classList.add('hidden');
-  ui.overSeed.textContent = 'Seed ' + game.seed + ' — replay with ?seed=' + game.seed;
+  ui.overSeed.textContent = 'Seed ' + game.seed + ' — replay this exact run with ?seed=' + game.seed;
   ui.titleBest.textContent = 'Best: ' + bestScore.toLocaleString();
   ui.mirror.classList.add('hidden');
   ui.slowmoFx.classList.add('hidden'); ui.invulnFx.classList.add('hidden');
@@ -1889,7 +2114,8 @@ function gameOver() {
   ui.lbSubmit.disabled = false; ui.lbName.disabled = false;
   ui.lbName.value = store.get('pedro.name', '');
   ui.lbMsg.textContent = Board.shared ? 'Add your score to the leaderboard?' : "Add your score to this phone's leaderboard?";
-  game.shareText = 'I got Pedro ' + miles.toFixed(2) + ' miles toward game night. Score: ' + score.toLocaleString() + '. Beat that: ' + C.shareUrl;
+  game.shareText = 'I got Pedro ' + miles.toFixed(2) + ' miles ' + (game.goal > 0 ? 'and made it to ' + C.goals[game.goal - 1].share : 'toward game night') +
+    '. Score: ' + score.toLocaleString() + '. Beat that: ' + C.shareUrl;
 }
 
 function pause() {
@@ -1922,6 +2148,7 @@ const ui = {
   speech: $('speech'), speechText: $('speechText'), hitFx: $('hitFx'), musicBtn: $('musicBtn'),
   pauseBtn: $('pauseBtn'), muteBtn: $('muteBtn'), shareBtn: $('shareBtn'), toast: $('toast'),
   overNewBest: $('overNewBest'), overTitle: $('overTitle'), banner: $('banner'), bannerSub: $('bannerSub'),
+  bannerB1: $('bannerB1'), bannerB2: $('bannerB2'), hudCoins: $('hudCoinsVal'), overCoins: $('overCoins'),
   confetti: $('confetti'), floaters: Array.from(document.querySelectorAll('.floater')), overSeed: $('overSeed'), mirror: $('mirror'), mirrorCount: $('mirrorCount'),
   mirrorLanes: Array.from(document.querySelectorAll('#mirror .mlane')), mirrorDots: Array.from(document.querySelectorAll('#mirror .mdot')),
   mirrorPedro: document.querySelector('#mirror .mpedro'),
@@ -1936,9 +2163,10 @@ function updateHud() {
   const s = Math.floor(game.score);
   if (s !== hudCache.score) { hudCache.score = s; ui.score.textContent = s.toLocaleString(); }
   const miles = game.sigma / Core.METERS_PER_MILE;
-  const past = miles >= C.milestoneMiles;
-  if (past !== hudCache.past) { hudCache.past = past; ui.milesLabel.textContent = past ? 'PAST GAME NIGHT' : 'TO GAME NIGHT'; }
-  const m = Math.floor(Math.abs(C.milestoneMiles - miles) * 100);
+  const last = C.goals[C.goals.length - 1], next = C.goals[game.goal];
+  if (game.goal !== hudCache.past) { hudCache.past = game.goal; ui.milesLabel.textContent = next ? next.hud : 'PAST ' + last.sign; }
+  const m = Math.floor(Math.abs((next ? next.miles : last.miles) - miles) * 100);
+  if (game.coins !== hudCache.coins) { hudCache.coins = game.coins; ui.hudCoins.textContent = game.coins; }
   if (m !== hudCache.miles) { hudCache.miles = m; ui.miles.textContent = (m / 100).toFixed(2) + ' mi'; }
   if (game.lives !== hudCache.lives) {
     for (let i = 0; i < ui.lifeIcons.length; i++) {
@@ -2317,6 +2545,8 @@ function updateHazards(dtGame, realDt) {
   const sig = game.sigma, hsc = C.hitboxScale;
   const pHalfW = C.playerSize[0] * hsc / 2, pHalfL = C.playerSize[1] * hsc / 2;
   let tg = 0;
+  coinCount = 0;
+  _coinQ.setFromEuler(_coinE.set(0, game.time * 4, 0));
   const blinkOn = (game.time * 6) % 2 < 1;
   const list = sp.hazards;
   for (let i = 0; i < list.length; i++) {
@@ -2333,6 +2563,14 @@ function updateHazards(dtGame, realDt) {
     } else if (ahead < -C.despawnBehindMeters) { releaseHazard(h); continue; }
     if (h.bounced && Math.abs(h.bx) > 30) { releaseHazard(h); continue; }
 
+    if (h.type === T.COIN) {
+      const zc = -ahead, xc = laneX(h.lane);
+      if (game.state === 'play' && Math.abs(zc) < pHalfL + 0.6 && Math.abs(xc - player.x) < pHalfW + 0.5) { collectCoin(h); continue; }
+      if (coinCount < COIN_MAX && ahead < C.fogFar + 10) {
+        coinMesh.setMatrixAt(coinCount++, _coinM.compose(_coinP.set(xc, 1.0 + Math.sin(game.time * 5 + h.power) * 0.12, zc), _coinQ, _coinS));
+      }
+      continue;
+    }
     let x = laneX(h.lane), yaw = 0, blinking = false;
     if (h.type === T.CHANGER) {
       const p = Core.clamp01((sig - h.moveStart) / (h.moveEnd - h.moveStart));
@@ -2376,7 +2614,7 @@ function updateHazards(dtGame, realDt) {
     }
 
     // Near miss: a vehicle passes Pedro with tight side clearance, or right after he left its lane.
-    if (game.state === 'play' && !h.hit && !h.bounced && !h.nearMissed && h.type !== T.DEBRIS && h.type !== T.POWERUP) {
+    if (game.state === 'play' && !h.hit && !h.bounced && !h.nearMissed && h.type !== T.DEBRIS && h.type !== T.POWERUP && h.type !== T.COIN) {
       const reach = C.playerSize[1] / 2 + h.l / 2;
       if (Math.abs(z) < reach + 1) {
         const clear = Math.abs(x - player.x) - (C.playerSize[0] + h.w) / 2;
@@ -2394,6 +2632,8 @@ function updateHazards(dtGame, realDt) {
     }
   }
   game.tgCount = tg;
+  coinMesh.count = coinCount;
+  coinMesh.instanceMatrix.needsUpdate = true;
 }
 
 function bounceAside(h, hx) {
@@ -2497,7 +2737,7 @@ function applyPower(kind) {
     game.effect = kind;
     game.effectDur = game.effectT =
       kind === POWER.BRAKE ? C.brakeCheckSec : kind === POWER.DETAIL ? C.freshDetailSec :
-      kind === POWER.DONUT ? C.donutSec : C.carpoolSec;
+      C.donutSec;
     if (kind === POWER.DONUT) say(pickLine(DONUT_LINES, 'donut'), true);
   }
   floatText(POWER_INFO[kind].name + '!', POWER_INFO[kind].css);
@@ -2525,7 +2765,7 @@ function updateEffects(realDt) {
 }
 
 // ---------- Scoring events ----------
-function scoreMultiplier() { return game.effect === POWER.CARPOOL ? C.carpoolMultiplier : 1; }
+function scoreMultiplier() { return 1; }
 const _proj = new THREE.Vector3();
 let floaterIdx = 0;
 function floatText(text, color) {
@@ -2557,11 +2797,16 @@ for (let i = 0; i < 36; i++) {
   ui.confetti.appendChild(c);
 }
 let bannerTimer = 0;
-function hitMilestone() {
-  game.milestoneHit = true;
-  game.score += C.milestoneBonus * scoreMultiplier();
-  ui.bannerSub.textContent = '+' + (C.milestoneBonus * scoreMultiplier()).toLocaleString() + ' · keep driving for score';
+function hitGoal(i) {
+  const g = C.goals[i];
+  game.goal = i + 1;
+  game.score += g.bonus;
+  ui.bannerB1.textContent = g.banner[0];
+  ui.bannerB2.textContent = g.banner[1];
+  ui.bannerSub.textContent = g.sub + ' · +' + g.bonus.toLocaleString() + ' · Next: ' + g.next;
   ui.banner.classList.remove('hidden');
+  if (g.line) say(g.line, true);
+  if (g.music) Sfx.setStyle(g.music);
   ui.confetti.classList.remove('go'); void ui.confetti.offsetWidth; ui.confetti.classList.add('go');
   clearTimeout(bannerTimer);
   bannerTimer = setTimeout(() => { ui.banner.classList.add('hidden'); ui.confetti.classList.remove('go'); }, C.bannerSec * 1000);
@@ -2675,7 +2920,7 @@ function update(realDt) {
     if (!crashing) {
       game.spawner.ensure(game.sigma);
       game.score += d * C.pointsPerMeter * (game.mph * speedMult() / C.startSpeedMph) * scoreMultiplier();
-      if (!game.milestoneHit && game.sigma >= C.milestoneMiles * Core.METERS_PER_MILE) hitMilestone();
+      if (game.goal < C.goals.length && game.sigma >= C.goals[game.goal].miles * Core.METERS_PER_MILE) hitGoal(game.goal);
       updatePlayer(realDt);
     } else {
       player.group.rotation.y += game.spin * dtGame * 2.2;
@@ -2752,7 +2997,8 @@ window.__pedro = {
       })(),
       miles: game.sigma / Core.METERS_PER_MILE, score: game.score, seed: game.seed, liveHazards: live,
       rows: game.spawner ? game.spawner.rowCount : 0, roast: game.lastRoast || '',
-      nearMisses: game.nearMisses, milestoneHit: game.milestoneHit,
+      nearMisses: game.nearMisses, milestoneHit: game.goal > 0, goal: game.goal, coins: game.coins, musicStyle: Sfx.style(),
+      hudLabel: ui.milesLabel.textContent,
       audio: Sfx.state(), muted: Sfx.muted, shareText: game.shareText || '',
       shield: game.shield, effect: game.effect, effectT: game.effectT, powerups: game.powerups, plowed: game.plowed };
   },
@@ -2765,6 +3011,21 @@ window.__pedro = {
   },
   // ?debug only: grant a power-up (0 Full Coverage, 1 Brake Check, 2 Fresh Detail, 3 Carpool)
   grant(kind) { if (DEBUG && game.state === 'play') applyPower(kind); },
+  // ?debug only: a coin trail in `lane`, first coin `ahead` meters in front of Pedro
+  spawnCoins(lane, ahead, n) {
+    if (!DEBUG || !game.spawner) return 0;
+    const k = Core.typeK(Core.T.COIN), trail = 990000 + Math.floor(Math.random() * 9999);
+    let made = 0;
+    for (let i = 0; i < n; i++) {
+      const h = game.spawner.hazards.find((x) => !x.active);
+      if (!h) break;
+      Object.assign(h, { active: true, id: 980000 + i, type: Core.T.COIN, lane, lane2: lane, k, sigma: game.sigma + (ahead + i * 7) / (1 - k),
+        hs: Core.halfSpan(Core.T.COIN), w: 1, l: 1, row: -1, color: n, variant: trail, power: i, vis: null, hit: false, bounced: false,
+        nearMissed: true, moveStart: Infinity, moveEnd: Infinity, blinkStart: Infinity, fade: 1, bx: 0, by: 0 });
+      made++;
+    }
+    return made;
+  },
   // ?debug only: place tailgaters behind Pedro, e.g. [[1, 30], [1, 55], [3, 45]] = [lane, meters behind]
   spawnTailgaters(list) {
     if (!DEBUG || !game.spawner) return 0;

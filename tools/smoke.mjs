@@ -162,7 +162,7 @@ s.mph > 70 && s.miles > 0 ? ok(`speed rising: ${s.mph.toFixed(1)} mph at ${s.mil
   await sleep(700);
   await page.keyboard.press(' '); await sleep(250);
   s = await snap();
-  s.state === 'play' && s.miles < 0.05 && s.seed === 12345 ? ok('Space restarts instantly with the same ?seed') : fail('restart failed: ' + JSON.stringify(s));
+  s.state === 'play' && s.miles < 0.05 && s.seed !== 12345 ? ok(`Space restarts instantly; ?seed only replays the first run (new seed ${s.seed})`) : fail('restart failed: ' + JSON.stringify(s));
 }
 
 // --- Auto-pause on visibilitychange ---
@@ -230,7 +230,9 @@ async function autopilot(label, query, seconds, expect) {
 }
 const QUICK = process.argv.includes('--quick');   // skip the long autopilot runs
 if (!QUICK) await autopilot('milestone', '?debug&seed=777&start=9.8', 25, (st) => {
-  st.milestoneHit ? ok('passed 10 mi: "PEDRO MADE IT TO GAME NIGHT!" banner fired') : fail('milestone not reached');
+  st.goal >= 1 ? ok('passed 10 mi: "PEDRO MADE IT TO GAME NIGHT!" banner fired') : fail('milestone not reached');
+  st.musicStyle === 'dubstep' ? ok("music switched to dubstep at Carlson's house") : fail('music style after game night: ' + st.musicStyle);
+  st.hudLabel === 'DROP-OFF AT CVS' ? ok('HUD now counts down to the CVS drop-off') : fail('HUD label after game night: ' + st.hudLabel);
   st.nearMisses > 0 ? ok(`near-miss bonus awarded (${st.nearMisses})`) : fail('no near misses recorded');
 });
 if (!QUICK) await autopilot('start', '?debug&seed=4242', 30);
@@ -243,6 +245,47 @@ if (!QUICK) await autopilot('brutal', '?debug&seed=4243&start=12', 40, (st) => {
   tw.mismatches === 0 ? ok(`mirror matched the real tailgaters (dots + lanes) on all ${tw.checks} checks; most at once: ${tw.max.truth} in lane(s) ${tw.max.truthLanes.join(',')}`)
     : fail(`mirror disagreed with the hazard list on ${tw.mismatches}/${tw.checks} checks`);
 });
+
+// --- Goal chain + coins ---
+{
+  const pg = await context.newPage();
+  const errs = [];
+  pg.on('pageerror', (e) => errs.push(e.message));
+  const goalAt = async (start) => {
+    await pg.goto(pathToFileURL(path.join(root, 'index.html')).href + `?debug&seed=5&start=${start}`);
+    await pg.waitForFunction(() => window.__pedro && window.__pedro.ready);
+    await pg.keyboard.press('Enter');
+    await pg.waitForFunction(() => window.__pedro.snapshot().mph > 100, null, { timeout: 15000 });
+    await pg.evaluate(() => window.__pedro.grant(2));     // invincible: we're testing goals, not dodging
+  };
+  let g = await (async () => { await goalAt(0.5); return pg.evaluate(() => window.__pedro.snapshot()); })();
+  g.hudLabel === 'TO GAME NIGHT' && g.musicStyle === 'folk' ? ok('start: HUD "TO GAME NIGHT", folk music') : fail('start: ' + g.hudLabel + ' / ' + g.musicStyle);
+  // Coins: a trail in Pedro's lane, all collected -> coin count, HUD counter, full-trail bonus
+  const before = g.score;
+  await pg.evaluate(() => window.__pedro.spawnCoins(window.__pedro.snapshot().lane, 30, 4));
+  await pg.waitForFunction(() => window.__pedro.snapshot().coins >= 4, null, { timeout: 30000 }).catch(() => {});
+  g = await pg.evaluate(() => window.__pedro.snapshot());
+  const coinHud = await pg.textContent('#hudCoinsVal');
+  g.coins === 4 && coinHud === '4' ? ok(`coins: collected a 4-coin trail, HUD shows 🪙 ${coinHud}`) : fail(`coins: ${g.coins}, HUD ${coinHud}`);
+  await pg.screenshot({ path: path.join(outDir, '17-coins.png') });
+  // CVS at 15 mi
+  await goalAt(14.96);
+  await pg.waitForFunction(() => window.__pedro.snapshot().goal >= 2, null, { timeout: 30000 }).catch(() => {});
+  g = await pg.evaluate(() => window.__pedro.snapshot());
+  let banner = await pg.evaluate(() => document.getElementById('banner').innerText.replace(/\s+/g, ' '));
+  await pg.screenshot({ path: path.join(outDir, '18-goal-cvs.png') });
+  g.goal === 2 && /CVS/.test(banner) && g.hudLabel === 'TO FALL RIVER' && g.musicStyle === 'dubstep'
+    ? ok(`15 mi: "${banner.slice(0, 70)}…", HUD now "TO FALL RIVER", still dubstep`) : fail(`CVS goal: ${JSON.stringify({ goal: g.goal, banner, label: g.hudLabel, style: g.musicStyle })}`);
+  // Fall River at 20 mi
+  await goalAt(19.96);
+  await pg.waitForFunction(() => window.__pedro.snapshot().goal >= 3, null, { timeout: 30000 }).catch(() => {});
+  g = await pg.evaluate(() => window.__pedro.snapshot());
+  banner = await pg.evaluate(() => document.getElementById('banner').innerText.replace(/\s+/g, ' '));
+  g.goal === 3 && /FALL RIVER/i.test(banner) && g.hudLabel === 'PAST FALL RIVER'
+    ? ok(`20 mi: "${banner.slice(0, 60)}…", HUD now "PAST FALL RIVER"`) : fail(`Fall River goal: ${JSON.stringify({ goal: g.goal, banner, label: g.hudLabel })}`);
+  if (errs.length) fail('goal page errors: ' + errs.join(' | ')); else ok('goal/coin page: no errors');
+  await pg.close();
+}
 
 // --- Power-ups ---
 {
@@ -264,11 +307,11 @@ if (!QUICK) await autopilot('brutal', '?debug&seed=4243&start=12', 40, (st) => {
   let b = await sn();
   b.effect === 1 && /BRAKE CHECK/.test(await hud()) ? ok('Brake Check active + HUD timer shown') : fail('brake check not active: ' + JSON.stringify(b));
   b.mph < a.mph * 0.6 ? ok(`Brake Check slows the world (${a.mph.toFixed(0)} -> ${b.mph.toFixed(0)} effective mph)`) : fail(`no slow-mo: ${a.mph} -> ${b.mph}`);
-  // Only one timed effect: Carpool replaces Brake Check
+  // Only one timed effect: Donut replaces Brake Check
   await p3.evaluate(() => window.__pedro.grant(3));
-  await p3.waitForFunction(() => /CARPOOL/.test(window.__pedro.hudText()), null, { timeout: 10000 }).catch(() => {});
+  await p3.waitForFunction(() => /DONUT/.test(window.__pedro.hudText()), null, { timeout: 10000 }).catch(() => {});
   b = await sn();
-  b.effect === 3 && /CARPOOL/.test(await hud()) && !/BRAKE/.test(await hud()) ? ok('Carpool replaces Brake Check (one timed effect at a time)') : fail('effect replacement broken: ' + (await hud()));
+  b.effect === 3 && /DONUT/.test(await hud()) && !/BRAKE/.test(await hud()) ? ok('Donut replaces Brake Check (one timed effect at a time)') : fail('effect replacement broken: ' + (await hud()));
   // Kamikaze pilot: steer INTO a blocked lane of the next row (real key events)
   await p3.evaluate(() => {
     const key = (k) => window.dispatchEvent(new KeyboardEvent('keydown', { key: k }));
@@ -308,23 +351,23 @@ if (!QUICK) await autopilot('brutal', '?debug&seed=4243&start=12', 40, (st) => {
   await sleep(2300);   // let the post-hit grace end
   c = await sn();
   const before = c.lives;
-  await p3.evaluate(() => window.__pedro.grant(5));
+  await p3.evaluate(() => window.__pedro.grant(4));
   await sleep(250);
   c = await sn();
   const R = await p3.evaluate(() => REPAIR_LINES);
   c.lives === Math.min(3, before + 1) && c.damage === 3 - c.lives && R.includes(c.speech)
     ? ok(`chouriço: ${before} -> ${c.lives} links, damage stage ${c.damage}, Pedro: "${c.speech}"`) : fail('chouriço: ' + JSON.stringify({ before, l: c.lives, d: c.damage, sp: c.speech }));
-  await p3.evaluate(() => window.__pedro.grant(5));
+  await p3.evaluate(() => window.__pedro.grant(4));
   await sleep(150);
   c = await sn();
   c.lives === 3 ? ok('chouriço at full links gives points instead (no 4th link)') : fail('lives exceeded max: ' + c.lives);
   // Donut: speed boost
   a = await sn();
-  await p3.evaluate(() => window.__pedro.grant(4));
+  await p3.evaluate(() => window.__pedro.grant(3));
   await sleep(300);
   b = await sn();
   const ratio = b.mph / a.mph;
-  b.effect === 4 && /DONUT RUSH/.test(await hud()) && ratio > 1.25 && ratio < 1.36
+  b.effect === 3 && /DONUT RUSH/.test(await hud()) && ratio > 1.25 && ratio < 1.36
     ? ok(`donut boost: ${a.mph.toFixed(0)} -> ${b.mph.toFixed(0)} mph (x${ratio.toFixed(2)}), HUD shows DONUT RUSH`) : fail(`donut: effect ${b.effect}, ratio ${ratio}, hud ${await hud()}`);
   await p3.screenshot({ path: path.join(outDir, '7b-donut.png') });
   const info = (await sn()).music;
