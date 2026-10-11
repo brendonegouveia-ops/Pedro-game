@@ -9,7 +9,10 @@
 //      lane changes occupy both lanes for laneChange+reaction time) must find a survivable
 //      path from the start lane to the end of the last row.
 //
-//   node fairness.mjs [rowsPerSeed=1000] [seeds=10]
+// Every week (level) is checked separately: later weeks start further up the difficulty curve and top out
+// faster. The week scaling is re-derived here from CONFIG too, not taken from the core.
+//
+//   node fairness.mjs [rowsPerSeed=1000] [seeds=10] [--weeks=1,3,6,11]
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
@@ -38,13 +41,26 @@ const NAMES = ['sedan', 'truck', 'debris', 'changer', 'tailgater', 'powerup'];
 function kOf(type) { return NAMES[type] === 'debris' ? 0 : NAMES[type] === 'tailgater' ? CONFIG.tailgaterSpeedFrac : CONFIG.trafficSpeedFrac; }
 function lenOf(type) { return NAMES[type] === 'powerup' ? 1.6 : CONFIG.hazardSize[NAMES[type]][1]; }
 function hsOf(type) { return ((CONFIG.playerSize[1] + lenOf(type)) * CONFIG.hitboxScale / 2) / Math.abs(1 - kOf(type)); }
-function diffOf(miles) {
+// ---- Week scaling, re-derived ----
+let OFFSET = 0, TOP = CONFIG.maxSpeedMph;
+function setWeekLocal(w) {
+  const p = CONFIG.difficultyCurve, d0 = p[0][1];
+  const target = Math.min(d0 + CONFIG.weekDifficultyStep * (w - 1), Math.max(d0, CONFIG.weekDifficultyCap));
+  // invert the piecewise-linear curve by bisection (independent of the core's closed form)
+  let lo = 0, hi = p[p.length - 1][0];
+  if (target <= d0) hi = 0;
+  for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2; if (curve(m) < target) lo = m; else hi = m; }
+  OFFSET = hi;
+  TOP = Math.max(CONFIG.maxSpeedMph, Math.min(CONFIG.maxSpeedMph + CONFIG.weekTopSpeedStepMph * (w - 1), CONFIG.weekTopSpeedCapMph));
+}
+function diffOf(miles) { return curve(miles + OFFSET); }
+function curve(miles) {
   const p = CONFIG.difficultyCurve;
   if (miles <= p[0][0]) return p[0][1];
   for (let i = 1; i < p.length; i++) if (miles <= p[i][0]) return p[i - 1][1] + (p[i][1] - p[i - 1][1]) * (miles - p[i - 1][0]) / (p[i][0] - p[i - 1][0]);
   return p[p.length - 1][1];
 }
-function vOf(sigma) { const d = diffOf(sigma / MPM); return (CONFIG.startSpeedMph + (CONFIG.maxSpeedMph - CONFIG.startSpeedMph) * d) * MPH; }
+function vOf(sigma) { const d = diffOf(sigma / MPM); return (CONFIG.startSpeedMph + (TOP - CONFIG.startSpeedMph) * d) * MPH; }
 // Rows are validated as if Pedro is boosted by a donut (fastest he can go), so check at that speed.
 const LC = (CONFIG.laneChangeMs / 1000 + CONFIG.reactionSec) * CONFIG.donutSpeedMult;
 const EPS = 1e-6;
@@ -132,7 +148,8 @@ function runSeed(seed) {
   return { seed, rows: R.length, hazards: H.length, fallbacks: sp.fallbacks, retries: sp.retries, miles, violations, survivable };
 }
 
-// ---- Difficulty curve timing (sanity) ----
+// ---- Difficulty curve timing (sanity, week 1) ----
+setWeekLocal(1); Core.setWeek(1);
 {
   let s = 0, t = 0;
   const marks = [30, 60, 120, 180, 240];
@@ -144,16 +161,27 @@ function runSeed(seed) {
   console.log('Difficulty timeline (uninterrupted run):\n  ' + out.join('\n  '));
 }
 
+const weeksArg = process.argv.find((a) => a.startsWith('--weeks='));
+const WEEKS = weeksArg ? weeksArg.slice(8).split(',').map(Number) : [1, 3, 6, 11];
 let total = 0, bad = 0, fallbacks = 0, retries = 0;
 const t0 = Date.now();
-for (let i = 0; i < SEEDS; i++) {
-  const seed = (0x9E3779B1 * (i + 1)) >>> 0;
-  const r = runSeed(seed);
-  total += r.rows; fallbacks += r.fallbacks; retries += r.retries;
-  bad += r.violations.length;
-  console.log(`seed ${String(seed).padStart(10)}: ${r.rows} rows, ${r.hazards} hazards, ${r.miles.toFixed(1)} mi, ` +
-    `retries ${r.retries}, fallbacks ${r.fallbacks}, global path ${r.survivable ? 'OK' : 'NONE'}, violations ${r.violations.length}`);
-  for (const v of r.violations.slice(0, 10)) console.log('    ' + v);
+for (const wk of WEEKS) {
+  setWeekLocal(wk); Core.setWeek(wk);
+  const coreOff = Core.weekOffset(), coreTop = Core.topSpeedMph();
+  console.log(`\nWeek ${wk}: ${Core.weekMiles(wk)} mi, starts at difficulty ${diffOf(0).toFixed(2)} (curve mile ${OFFSET.toFixed(2)}), ` +
+    `${(vOf(0) / MPH).toFixed(0)} → ${TOP} mph`);
+  if (Math.abs(coreOff - OFFSET) > 1e-6 || coreTop !== TOP) {
+    bad++; console.log(`    core week scaling disagrees: offset ${coreOff} vs ${OFFSET}, top ${coreTop} vs ${TOP}`);
+  }
+  for (let i = 0; i < SEEDS; i++) {
+    const seed = (0x9E3779B1 * (i + 1) + wk * 7919) >>> 0;
+    const r = runSeed(seed);
+    total += r.rows; fallbacks += r.fallbacks; retries += r.retries;
+    bad += r.violations.length;
+    console.log(`seed ${String(seed).padStart(10)}: ${r.rows} rows, ${r.hazards} hazards, ${r.miles.toFixed(1)} mi, ` +
+      `retries ${r.retries}, fallbacks ${r.fallbacks}, global path ${r.survivable ? 'OK' : 'NONE'}, violations ${r.violations.length}`);
+    for (const v of r.violations.slice(0, 10)) console.log('    ' + v);
+  }
 }
 console.log(`\n${total} rows checked in ${((Date.now() - t0) / 1000).toFixed(1)} s — ${bad} violations, ${retries} regenerated rows, ${fallbacks} empty-row fallbacks`);
 if (MUTATE) {

@@ -2,19 +2,19 @@
 
 **Play it:** https://brendonegouveia-ops.github.io/pedro-game/
 
-Endless 3D lane-dodger. Pedro is driving his brand-new silver Jetta to game night, way too fast. Three goals, one after another:
+3D lane-dodger. Pedro is driving his brand-new silver Jetta to game night at Carlson's, way too fast, every week.
 
-1. **Mile 10:** make it to game night at Carlson's house. The music drops into dubstep.
-2. **Mile 15:** drop the stranger he met at Dunkin' Donuts off at CVS.
-3. **Mile 20:** drive to Fall River.
-
-After that it's endless, for score. Coins along the road pay extra, and a full trail earns a bonus. Many trails run straight at a car, so grabbing them all means swerving out at the last second.
+- **Weeks are levels.** Each week is one drive to game night: Week 1 is 10 miles, Week 2 is 12, and so on (+2 mi a week, capped at 25). Every week starts further up the difficulty curve and tops out faster (165 mph in Week 1, +3 mph a week up to 195). Each week's game night has its own theme (Catan night, Poker night, Mario Kart night…).
+- **Checkpoints.** Making it to game night pays a bonus (3,000 + 1,000 per week, plus 500 per chouriço link left), Pedro says something, and the next week unlocks. A wreck retries the same week. Links refill every week. Progress is saved on the phone, and the title screen has a week picker (◀ ▶, or ← → on a keyboard) for any week you've reached.
+- **Final stretch.** Two miles out, Carlson turns the speakers up: the accordion music builds and drops into dubstep. The last ~200 m before the driveway are traffic-free.
+- **Coins** along the road pay extra, and a full trail earns a bonus. Many trails run straight at a car, so grabbing them all means swerving out at the last second.
+- **How to Play** opens on the first visit (and from the ❓ button on the title screen): rules, lives, coins, tailgaters, every power-up.
 
 - **Lives:** Pedro has **3 chouriço links** (bottom-left). Every hit costs one, he says something like "I can fix that", and the Jetta looks more beat-up: scuffs and a cracked window, then duct tape, a smashed taillight and smoke. The third hit ends the run.
 - **Tailgaters:** a rear-view mirror pops up at the top of the screen when they're coming. It has one column per lane with Pedro's car at the top, and each tailgater is a red dot sliding up its lane (several at once, side by side if they share a lane). If one is in your lane, that column flashes and a **MOVE!** tag appears.
-- **Music:** an original synthesized Portuguese *corridinho*-style accordion dance (2/4, parallel thirds, musette reeds, oom-pah bass, ferrinhos) that speeds up with the car. At Carlson's house it builds and drops into dubstep (wobble bass, half-time drums).
+- **Music:** an original synthesized Portuguese *corridinho*-style accordion dance (2/4, parallel thirds, musette reeds, oom-pah bass, ferrinhos) that speeds up with the car. In each week's final two miles it builds and drops into dubstep (wobble bass, half-time drums).
 - **Phone:** swipe left/right, or tap the left/right half of the screen. Buttons bottom-right: pause, music, sound.
-- **Desktop:** ← → or A / D. P pauses, M mutes everything, N toggles music, Space restarts after a crash.
+- **Desktop:** ← → or A / D. P pauses, M mutes everything, N toggles music. After a drive, Space retries the week (or starts the next one if you made it).
 - The whole game is the single file `index.html` (Three.js `0.169.0` loads from jsdelivr). There's no build step. It runs from GitHub Pages or straight from disk (`file://`, needs internet for Three.js).
 
 ## Tweaking the game
@@ -24,8 +24,10 @@ Everything tunable lives in the `CONFIG` object at the top of the `<script id="p
 | What | CONFIG key(s) |
 |---|---|
 | Start / top speed (mph) | `startSpeedMph` (80), `maxSpeedMph` (165) |
-| How fast it gets hard | `difficultyCurve`, a list of `[miles, 0..1]` points. Default starts at 0.22 (no warm-up) and reaches full brutality at mile 9 (~4 min) |
-| Goals | `goals`: each has `miles`, the HUD label, the highway-sign text, banner text, bonus, Pedro's line, and optionally `music: 'dubstep'` |
+| How fast it gets hard | `difficultyCurve`, a list of `[miles, 0..1]` points. Week 1 uses it as-is: starts at 0.22 (no warm-up), full brutality at mile 9 (~4 min) |
+| Weeks | `weekBaseMiles` (10), `weekMilesStep` (2), `weekMaxMiles` (25): week length. `weekDifficultyStep` (0.13) / `weekDifficultyCap` (0.85): how far up the curve each week starts. `weekTopSpeedStepMph` (3) / `weekTopSpeedCapMph` (195): top speed per week |
+| Week rewards | `weekBonus` (`[3000, 1000]` = 3,000 + 1,000 × (week − 1)), `weekLifeBonus` (per link left) |
+| Final stretch | `weekDropMiles` (dubstep drop, 2 mi out), `weekFinishClearMeters` (traffic-free run-in), `finishSec` |
 | Coins | `coinPoints`, `coinTrailBonus`, `coinTrailChance`, `coinTrailMin`/`Max`, `coinRiskyChance`, `coinBailSec` |
 | Lives | `lives` (3), `hitGraceSec` (invulnerable time after a hit) |
 | Speech bubble time | `speechSec` |
@@ -54,6 +56,10 @@ These arrays sit right below `CONFIG`. Add a string per inside joke:
 | `HIT_LINES` | Bumps that don't cost a life: shield hits, plowing during Fresh Detail ("Ayo, my bad"…). |
 | `REPAIR_LINES` | Grabbing the rare chouriço. |
 | `DONUT_LINES` | Grabbing a donut. |
+| `WEEK_COMPLETE_LINES` | Making it to game night (week-complete screen). `{week}` is filled in. |
+| `GAME_NIGHTS` | What's on the table each week (cycles): "Catan night", "Poker night"… |
+
+`ROASTS` also fill in `{left}` (miles short of game night) and `{week}`.
 
 ```js
 const ROASTS = [
@@ -78,7 +84,16 @@ Only one timed effect runs at a time; a new one replaces the old one. Full Cover
 
 ## Leaderboard
 
-After each drive, players can type a name and add their score. **🏆 Leaderboard** on the title and game-over screens shows the top 10.
+After each drive, players can type a name and add their score. **🏆 Leaderboard** on the title and game-over screens shows the top 10, ranked by score. Each row shows which week the score came from.
+
+**Adding the week column to an existing board** (one-time, for boards set up before weeks existed). In Supabase, open **SQL Editor → New query**, paste, and click **Run**:
+
+```sql
+alter table public.scores add column if not exists week integer not null default 1 check (week between 1 and 999);
+notify pgrst, 'reload schema';
+```
+
+Scores already on the board become Week 1. Until this runs, the game keeps working: it saves and reads scores without the week, and rows just don't show one.
 
 The board is **shared by everyone**: it's connected to a Supabase project through `leaderboardUrl` / `leaderboardKey` in `CONFIG`. Phones that saved scores before the board went online get asked once whether to add them to the shared board. Duplicates are skipped, and the **Add them** button stays in the board until it's used.
 
@@ -93,6 +108,7 @@ If you blank out those two values, the game falls back to a per-device board. To
      name text not null check (char_length(name) between 1 and 16),
      score integer not null check (score between 0 and 5000000),
      miles real not null check (miles between 0 and 500),
+     week integer not null default 1 check (week between 1 and 999),
      created_at timestamptz not null default now()
    );
    alter table public.scores enable row level security;
@@ -101,6 +117,7 @@ If you blank out those two values, the game falls back to a per-device board. To
    create policy "anyone can read scores" on public.scores for select to anon using (true);
    create policy "anyone can add a score" on public.scores for insert to anon with check (true);
    grant select, insert on public.scores to anon;
+   alter table public.scores add column if not exists week integer not null default 1 check (week between 1 and 999);
    create index if not exists scores_score_idx on public.scores (score desc);
    notify pgrst, 'reload schema';
    ```
@@ -122,7 +139,7 @@ Both values are designed to be public. The table policies only allow reading sco
 Traffic comes in rows from a seeded PRNG (mulberry32). Every row is validated before it is committed: it must leave a **guaranteed-open lane** that Pedro can reach from the previous row's open lane within the clear gap between the rows. Each lane change counts as `laneChangeMs + reactionSec` at the speed Pedro will be doing when he gets there, multiplied by `donutSpeedMult`, so the guarantee holds even mid-donut. Every move also has to leave 1.5 m of spare room. Lane-changers count as blocking both of their lanes, and tailgaters count as blocking theirs. A row that fails is regenerated, up to 8 tries, then replaced with an empty row.
 
 - **Replay a run:** the game-over screen shows its seed. Open `…/pedro-game/?seed=12345` to replay that exact traffic. The seed applies to the first run only; restarting goes back to fresh random runs.
-- **See the guarantee:** add `?debug` to the URL (e.g. `?debug&seed=12345`). A green strip marks each row's guaranteed-open lane, and a panel shows fps, difficulty, and spawner stats. `?debug&start=2.5` starts the run at mile 2.5.
+- **See the guarantee:** add `?debug` to the URL (e.g. `?debug&seed=12345`). A green strip marks each row's guaranteed-open lane, and a panel shows fps, difficulty, and spawner stats. `?debug&start=2.5` starts the run at mile 2.5, and `?debug&week=4` jumps to Week 4.
 
 ## Verification tools (`/tools`)
 
@@ -130,18 +147,19 @@ None of this is needed to play; it's for checking changes before pushing.
 
 ```sh
 cd tools && npm install
-node fairness.mjs            # 10 seeds × 1,000 rows, independent fairness check (no browser)
+node fairness.mjs            # weeks 1, 3, 6, 11 × 10 seeds × 1,000 rows, independent fairness check (no browser)
+node fairness.mjs 1000 10 --weeks=1,2,3,4,5   # pick the weeks
 node fairness.mjs 1000 3 --mutate   # sabotages the spawner to prove the checker catches violations
 node smoke.mjs               # headless Chromium at iPhone size: input, crash, power-ups, audio, share, autopilot
 node smoke.mjs --quick       # same, minus the two long autopilot runs
 ```
 
-- `fairness.mjs` re-derives every hitbox interval from `CONFIG` instead of trusting the spawner. It checks each row's guaranteed lane, then runs a brute-force path search over the whole run.
+- `fairness.mjs` re-derives every hitbox interval and each week's difficulty offset and top speed from `CONFIG` instead of trusting the spawner. It checks each row's guaranteed lane, then runs a brute-force path search over the whole run.
 - `smoke.mjs` fails on any console error and writes screenshots to `tools/out/`.
-- Its autopilot drives with real key events, following the guaranteed lane and dodging as late as it safely can. It must get through the first 30 s, the 10-mile milestone stretch and full-difficulty 165 mph traffic **without taking a single hit**.
+- Its autopilot drives with real key events, following the guaranteed lane and dodging as late as it safely can. It must get through the first 30 s, the run-in to game night at the end of Week 1, and full-difficulty Week 6 traffic at ~180 mph **without taking a single hit**.
 
 ## Notes
 
 - **iPhone sound:** sound starts on your first tap (an iOS rule). The game tells iOS it's media playback, so it plays through the speaker even with the ring/silent switch on (iOS 16.4+ uses `navigator.audioSession`; older versions use a silent looping audio element). Use the in-game 🔊 / ♪ buttons to mute.
-- **Saved data:** the high score and mute setting live in `localStorage`. Private browsing just doesn't save them.
+- **Saved data:** the high score, unlocked weeks, and mute setting live in `localStorage`. Private browsing just doesn't save them.
 - **Battery:** the game pauses automatically when you switch tabs or lock the phone; tap to resume.

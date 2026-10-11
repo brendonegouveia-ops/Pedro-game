@@ -32,7 +32,20 @@ const browser = await chromium.launch({
   args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
 });
 const { defaultBrowserType, ...iphone } = devices['iPhone 13'];
+// Every test page skips the first-visit How to Play popup and starts from clean week-1 progress,
+// unless its URL says `freshHelp` (first-visit test) or `keep` (progress persistence test).
+// (Patches getItem instead of writing storage: touching localStorage from an init script on file:// makes
+// Chromium drop it on reload.)
+const TEST_INIT = () => {
+  const q = location.search, get = Storage.prototype.getItem;
+  Storage.prototype.getItem = function (k) {
+    if (k === 'pedro.help' && !q.includes('freshHelp')) return '1';
+    if ((k === 'pedro.week.max' || k === 'pedro.week.sel') && !q.includes('keep')) return null;
+    return get.call(this, k);
+  };
+};
 const context = await browser.newContext({ ...iphone });
+await context.addInitScript(TEST_INIT);
 const page = await context.newPage();
 
 const consoleErrors = [];
@@ -72,7 +85,7 @@ async function tap(x, y) {
 // --- Start via tap ---
 let s = await snap();
 s.state === 'title' ? ok('title screen shown') : fail('expected title, got ' + s.state);
-await tap(W / 2, H / 2);
+await tap(W / 2, 40);       // above the title: the middle of the screen is the week picker
 await sleep(300);
 s = await snap();
 s.state === 'play' ? ok('tap starts the run') : fail('tap did not start run: ' + s.state);
@@ -158,11 +171,14 @@ s.mph > 70 && s.miles > 0 ? ok(`speed rising: ${s.mph.toFixed(1)} mph at ${s.mil
   s = await snap();
   s.state === 'over' ? ok('restart ignored during lockout') : fail('restart lockout missing');
   s.roast && !s.roast.includes('{') ? ok(`roast line: "${s.roast}"`) : fail('bad roast line: ' + s.roast);
+  s.result === 'wrecked' && s.overTitle === 'Wrecked' && /^Week 1 · [\d.]+ mi short of game night$/.test(s.overSub) && s.overCta === 'Tap / Space to retry Week 1'
+    ? ok(`wreck screen: "${s.overSub}", "${s.overCta}"`) : fail('wreck screen copy: ' + JSON.stringify({ r: s.result, t: s.overTitle, sub: s.overSub, cta: s.overCta }));
   await page.screenshot({ path: path.join(outDir, '4-gameover.png') });
   await sleep(700);
   await page.keyboard.press(' '); await sleep(250);
   s = await snap();
   s.state === 'play' && s.miles < 0.05 && s.seed !== 12345 ? ok(`Space restarts instantly; ?seed only replays the first run (new seed ${s.seed})`) : fail('restart failed: ' + JSON.stringify(s));
+  s.week === 1 && s.weekMax === 1 && s.lives === 3 ? ok('a wreck retries the same week (Week 1, links refilled, nothing unlocked)') : fail(`after wreck: week ${s.week}, max ${s.weekMax}, lives ${s.lives}`);
 }
 
 // --- Auto-pause on visibilitychange ---
@@ -219,24 +235,42 @@ async function autopilot(label, query, seconds, expect) {
   }
   st.firstTailWarn = tw;
   await p2.screenshot({ path: path.join(outDir, `5-autopilot-${label}.png`) });
-  st.state === 'play'
-    ? ok(`autopilot ${label}: no crash over ${((Date.now() - t0) / 1000).toFixed(0)} s, ${st.miles.toFixed(2)} mi, ${st.mph.toFixed(0)} mph, ${st.nearMisses} close calls, ${st.powerups} power-ups`)
+  const finished = st.state === 'finishing' || st.result === 'complete';
+  st.state === 'play' || finished
+    ? ok(`autopilot ${label}: ${finished ? 'made it to game night' : 'no crash'} over ${((Date.now() - t0) / 1000).toFixed(0)} s, ${st.miles.toFixed(2)} mi, ${st.mph.toFixed(0)} mph, ${st.nearMisses} close calls, ${st.powerups} power-ups`)
     : fail(`autopilot ${label}: crashed at ${st.miles.toFixed(2)} mi (seed ${st.seed})`);
   st.hits === 0 ? ok(`autopilot ${label}: zero hits, all 3 links intact`) : fail(`autopilot ${label}: took ${st.hits} hit(s) following the guaranteed lane`);
-  if (expect) expect(st);
+  if (expect) await expect(st, p2);
   if (errs.length) fail(`autopilot ${label} console errors: ` + errs.join(' | '));
   await p2.close();
   return st;
 }
 const QUICK = process.argv.includes('--quick');   // skip the long autopilot runs
-if (!QUICK) await autopilot('milestone', '?debug&seed=777&start=9.8', 25, (st) => {
-  st.goal >= 1 ? ok('passed 10 mi: "PEDRO MADE IT TO GAME NIGHT!" banner fired') : fail('milestone not reached');
-  st.musicStyle === 'dubstep' ? ok("music switched to dubstep at Carlson's house") : fail('music style after game night: ' + st.musicStyle);
-  st.hudLabel === 'DROP-OFF AT CVS' ? ok('HUD now counts down to the CVS drop-off') : fail('HUD label after game night: ' + st.hudLabel);
+if (!QUICK) await autopilot('finish', '?debug&seed=777&start=9.8', 25, async (st, p2) => {
+  const done = await p2.waitForFunction(() => window.__pedro.snapshot().state === 'over', null, { timeout: 60000 }).then(() => true, () => false);
+  const w = await p2.evaluate(() => window.__pedro.snapshot());
+  const lines = await p2.evaluate(() => WEEK_COMPLETE_LINES.map((l) => l.replace(/\{week\}/g, 1)));
+  await p2.screenshot({ path: path.join(outDir, '18-week-complete.png') });
+  done && w.result === 'complete' && w.overTitle === 'Week 1 complete!' && w.weekMax === 2 && w.overCta === 'Tap / Space: Week 2 ▶'
+    ? ok(`10 mi: "${w.overTitle}" — ${w.overSub}; Week 2 unlocked`) : fail('week complete: ' + JSON.stringify({ done, r: w.result, t: w.overTitle, max: w.weekMax, cta: w.overCta }));
+  lines.includes(w.roast) ? ok(`Pedro's week-complete line: "${w.roast}"`) : fail('week-complete line: ' + w.roast);
+  const bonus = await p2.textContent('#overBonus');
+  /Game night bonus \+3,000 · Links left \+1,500/.test(bonus) ? ok(`bonus: "${bonus}"`) : fail('bonus line: ' + bonus);
+  w.musicStyle === 'dubstep' ? ok('started inside the last 2 miles: dubstep from the start') : fail('music near the finish: ' + w.musicStyle);
+  await sleep(700);
+  await p2.keyboard.press(' ');
+  await p2.waitForFunction(() => window.__pedro.snapshot().state === 'play', null, { timeout: 5000 }).catch(() => {});
+  await sleep(300);
+  const n = await p2.evaluate(() => window.__pedro.snapshot());
+  n.state === 'play' && n.week === 2 && n.weekMiles === 12 && n.hudLabel === 'WEEK 2 · TO GAME NIGHT' && n.lives === 3 && n.topMph === 168 && n.musicStyle === 'folk'
+    ? ok(`Space starts Week 2: 12 mi, top speed ${n.topMph} mph, start difficulty ${n.difficulty.toFixed(2)}, HUD "${n.hudLabel}" ${n.hudMiles}, folk again`)
+    : fail('week 2 start: ' + JSON.stringify({ s: n.state, w: n.week, mi: n.weekMiles, l: n.hudLabel, lives: n.lives, top: n.topMph, m: n.musicStyle }));
+});
+if (!QUICK) await autopilot('start', '?debug&seed=4242', 30, (st) => {
   st.nearMisses > 0 ? ok(`near-miss bonus awarded (${st.nearMisses})`) : fail('no near misses recorded');
 });
-if (!QUICK) await autopilot('start', '?debug&seed=4242', 30);
-if (!QUICK) await autopilot('brutal', '?debug&seed=4243&start=12', 40, (st) => {
+if (!QUICK) await autopilot('brutal', '?debug&seed=4243&week=6&start=3', 40, (st) => {
+  st.week === 6 && st.difficulty >= 0.999 && st.mph > 175 ? ok(`week 6 at full difficulty: ${st.mph.toFixed(0)} mph`) : fail(`brutal run: week ${st.week}, difficulty ${st.difficulty}, ${st.mph} mph`);
   const tw = st.firstTailWarn;
   if (!tw) { fail('no tailgater mirror seen in 40 s at full difficulty'); return; }
   const m = tw.first;
@@ -246,45 +280,119 @@ if (!QUICK) await autopilot('brutal', '?debug&seed=4243&start=12', 40, (st) => {
     : fail(`mirror disagreed with the hazard list on ${tw.mismatches}/${tw.checks} checks`);
 });
 
-// --- Goal chain + coins ---
+// --- Weeks: HUD, coins, music drop, finish, week picker, saved progress ---
 {
   const pg = await context.newPage();
   const errs = [];
   pg.on('pageerror', (e) => errs.push(e.message));
-  const goalAt = async (start) => {
-    await pg.goto(pathToFileURL(path.join(root, 'index.html')).href + `?debug&seed=5&start=${start}`);
+  const base = pathToFileURL(path.join(root, 'index.html')).href;
+  const sn = () => pg.evaluate(() => window.__pedro.snapshot());
+  const runAt = async (q) => {
+    await pg.goto(base + q);
     await pg.waitForFunction(() => window.__pedro && window.__pedro.ready);
     await pg.keyboard.press('Enter');
     await pg.waitForFunction(() => window.__pedro.snapshot().mph > 100, null, { timeout: 15000 });
-    await pg.evaluate(() => window.__pedro.grant(2));     // invincible: we're testing goals, not dodging
+    await pg.evaluate(() => window.__pedro.grant(2));     // invincible: we're testing weeks, not dodging
   };
-  let g = await (async () => { await goalAt(0.5); return pg.evaluate(() => window.__pedro.snapshot()); })();
-  g.hudLabel === 'TO GAME NIGHT' && g.musicStyle === 'folk' ? ok('start: HUD "TO GAME NIGHT", folk music') : fail('start: ' + g.hudLabel + ' / ' + g.musicStyle);
+  await runAt('?debug&seed=5&start=0.5');
+  let g = await sn();
+  g.week === 1 && g.hudLabel === 'WEEK 1 · TO GAME NIGHT' && /^9\.\d\d mi$/.test(g.hudMiles) && g.musicStyle === 'folk'
+    ? ok(`week 1: HUD "${g.hudLabel}" ${g.hudMiles}, folk music`) : fail('week 1 HUD: ' + JSON.stringify({ w: g.week, l: g.hudLabel, m: g.hudMiles, s: g.musicStyle }));
   // Coins: a trail in Pedro's lane, all collected -> coin count, HUD counter, full-trail bonus
-  const before = g.score;
   await pg.evaluate(() => window.__pedro.spawnCoins(window.__pedro.snapshot().lane, 30, 4));
   await pg.waitForFunction(() => window.__pedro.snapshot().coins >= 4, null, { timeout: 30000 }).catch(() => {});
-  g = await pg.evaluate(() => window.__pedro.snapshot());
+  g = await sn();
   const coinHud = await pg.textContent('#hudCoinsVal');
   g.coins === 4 && coinHud === '4' ? ok(`coins: collected a 4-coin trail, HUD shows 🪙 ${coinHud}`) : fail(`coins: ${g.coins}, HUD ${coinHud}`);
   await pg.screenshot({ path: path.join(outDir, '17-coins.png') });
-  // CVS at 15 mi
-  await goalAt(14.96);
-  await pg.waitForFunction(() => window.__pedro.snapshot().goal >= 2, null, { timeout: 30000 }).catch(() => {});
-  g = await pg.evaluate(() => window.__pedro.snapshot());
-  let banner = await pg.evaluate(() => document.getElementById('banner').innerText.replace(/\s+/g, ' '));
-  await pg.screenshot({ path: path.join(outDir, '18-goal-cvs.png') });
-  g.goal === 2 && /CVS/.test(banner) && g.hudLabel === 'TO FALL RIVER' && g.musicStyle === 'dubstep'
-    ? ok(`15 mi: "${banner.slice(0, 70)}…", HUD now "TO FALL RIVER", still dubstep`) : fail(`CVS goal: ${JSON.stringify({ goal: g.goal, banner, label: g.hudLabel, style: g.musicStyle })}`);
-  // Fall River at 20 mi
-  await goalAt(19.96);
-  await pg.waitForFunction(() => window.__pedro.snapshot().goal >= 3, null, { timeout: 30000 }).catch(() => {});
-  g = await pg.evaluate(() => window.__pedro.snapshot());
-  banner = await pg.evaluate(() => document.getElementById('banner').innerText.replace(/\s+/g, ' '));
-  g.goal === 3 && /FALL RIVER/i.test(banner) && g.hudLabel === 'PAST FALL RIVER'
-    ? ok(`20 mi: "${banner.slice(0, 60)}…", HUD now "PAST FALL RIVER"`) : fail(`Fall River goal: ${JSON.stringify({ goal: g.goal, banner, label: g.hudLabel })}`);
-  if (errs.length) fail('goal page errors: ' + errs.join(' | ')); else ok('goal/coin page: no errors');
+  // Final 2 miles: the music builds and drops into dubstep
+  await runAt('?debug&seed=5&start=7.97');
+  await pg.waitForFunction(() => window.__pedro.snapshot().dropped, null, { timeout: 30000 }).catch(() => {});
+  g = await sn();
+  await pg.screenshot({ path: path.join(outDir, '19-final-stretch.png') });
+  g.dropped && g.musicStyle === 'dubstep' && /FINAL STRETCH/i.test(g.banner)
+    ? ok(`8 mi into week 1: "${g.banner}", music dropped into dubstep`) : fail('drop: ' + JSON.stringify({ d: g.dropped, s: g.musicStyle, b: g.banner }));
+  // Finish -> week complete (no traffic in the final stretch)
+  await runAt('?debug&seed=5&start=9.93');
+  const clear = await pg.evaluate(() => {
+    const c = window.__pedro.corridor();
+    return c.rows.every((r) => r.B < 10 * 1609.344 - 120);
+  });
+  clear ? ok('no traffic rows in the last stretch before Carlson\'s') : fail('traffic spawned in the finish stretch');
+  await pg.waitForFunction(() => window.__pedro.snapshot().state === 'finishing', null, { timeout: 120000, polling: 50 }).catch(() => {});
+  g = await sn();
+  g.state === 'finishing' && /MADE IT/i.test(g.banner) ? ok(`crossing 10 mi: "${g.banner}", Pedro: "${g.speech}"`) : fail('finish: ' + JSON.stringify({ s: g.state, b: g.banner }));
+  await pg.waitForFunction(() => window.__pedro.snapshot().state === 'over', null, { timeout: 60000 }).catch(() => {});
+  g = await sn();
+  g.result === 'complete' && g.weekMax === 2 ? ok('week complete screen, week 2 unlocked') : fail('complete: ' + JSON.stringify({ r: g.result, max: g.weekMax }));
+  const share = g.shareText;
+  /made it to game night! Week 1 \(10 mi\)/.test(share) ? ok(`share text: "${share}"`) : fail('share text: ' + share);
+  // "Weeks" -> title with Week 2 selected; ← / → pick, locked weeks can't be picked
+  await pg.click('#overMenuBtn');
+  g = await sn();
+  let wk = await pg.evaluate(() => ({ name: document.getElementById('weekName').textContent, sub: document.getElementById('weekSub').textContent,
+    prev: document.getElementById('weekPrev').disabled, next: document.getElementById('weekNext').disabled }));
+  await pg.screenshot({ path: path.join(outDir, '20-title-week-picker.png') });
+  g.state === 'title' && wk.name === 'WEEK 2' && /^12 mi · /.test(wk.sub) && !wk.prev && wk.next
+    ? ok(`Weeks button: title with "${wk.name}" (${wk.sub}) selected, Week 3 locked`) : fail('title picker: ' + JSON.stringify({ s: g.state, wk }));
+  await pg.keyboard.press('ArrowLeft');
+  wk = await pg.evaluate(() => document.getElementById('weekName').textContent);
+  await pg.keyboard.press('ArrowLeft');
+  const wk2 = await pg.evaluate(() => document.getElementById('weekName').textContent);
+  await pg.click('#weekNext'); await pg.click('#weekNext', { force: true });   // second one is disabled (Week 3 locked)
+  const wk3 = await pg.evaluate(() => document.getElementById('weekName').textContent);
+  g = await sn();
+  wk === 'WEEK 1' && wk2 === 'WEEK 1' && wk3 === 'WEEK 2' && g.state === 'title'
+    ? ok('← / ▶ pick weeks on the title screen (clamped to 1…unlocked) without starting a drive') : fail(`picker: ${wk}, ${wk2}, ${wk3}, state ${g.state}`);
+  // Saved progress survives a reload
+  await pg.goto(base + '?debug&seed=5&keep');
+  await pg.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  g = await sn();
+  const name = await pg.textContent('#weekName');
+  g.weekMax === 2 && name === 'WEEK 2' ? ok('progress saved: Week 2 still unlocked and selected after reload') : fail(`saved progress: max ${g.weekMax}, ${name}`);
+  await pg.keyboard.press('Enter'); await sleep(300);
+  g = await sn();
+  g.state === 'play' && g.week === 2 ? ok('Enter on the title drives the selected week') : fail(`start selected: ${g.state} week ${g.week}`);
+  // ?debug&week=N: later weeks are longer, faster, start harder, everything unlocked
+  await runAt('?debug&seed=5&week=3');
+  g = await sn();
+  g.week === 3 && g.weekMiles === 14 && g.topMph === 171 && Math.abs(g.difficulty - 0.48) < 0.02
+    ? ok(`week 3: ${g.weekMiles} mi, starts at difficulty ${g.difficulty.toFixed(2)}, tops out at ${g.topMph} mph`) : fail('week 3: ' + JSON.stringify({ w: g.week, mi: g.weekMiles, top: g.topMph, d: g.difficulty }));
+  if (errs.length) fail('weeks page errors: ' + errs.join(' | ')); else ok('weeks page: no errors');
   await pg.close();
+}
+
+// --- How to play: first visit opens it, taps on it don't start a drive, it never reappears once closed ---
+{
+  const hp = await context.newPage();
+  const errs = [];
+  hp.on('pageerror', (e) => errs.push(e.message));
+  await hp.goto(pathToFileURL(path.join(root, 'index.html')).href + '?freshHelp');
+  await hp.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  let h = await hp.evaluate(() => window.__pedro.snapshot());
+  const helpTxt = await hp.evaluate(() => document.querySelector('.help').innerText);
+  await hp.screenshot({ path: path.join(outDir, '21-how-to-play.png') });
+  h.help && /Full Coverage/.test(helpTxt) && /Donut/.test(helpTxt) && /3 chouriço links/.test(helpTxt) && /Week 1 is 10 miles/.test(helpTxt)
+    ? ok('first visit: How to Play opens with rules, lives, weeks and every power-up') : fail('help on first visit: ' + JSON.stringify({ open: h.help }));
+  const hb = await hp.locator('.help h3').first().boundingBox();
+  await hp.mouse.click(hb.x + 10, hb.y + 5);
+  await hp.keyboard.press('ArrowLeft');
+  h = await hp.evaluate(() => window.__pedro.snapshot());
+  h.state === 'title' && h.help ? ok('taps and keys inside How to Play never start a drive') : fail(`help leaked input: ${h.state}, open ${h.help}`);
+  await hp.click('#helpClose');
+  h = await hp.evaluate(() => window.__pedro.snapshot());
+  h.state === 'title' && !h.help ? ok('"Got it" closes it back to the title screen') : fail(`help close: ${h.state}, open ${h.help}`);
+  await hp.reload();
+  await hp.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  h = await hp.evaluate(() => window.__pedro.snapshot());
+  !h.help ? ok('How to Play does not reopen on the next visit') : fail('help reopened');
+  await hp.click('#helpBtn');
+  h = await hp.evaluate(() => window.__pedro.snapshot());
+  await hp.keyboard.press('Escape');
+  const h2 = await hp.evaluate(() => window.__pedro.snapshot());
+  h.help && !h2.help && h2.state === 'title' ? ok('❓ button reopens it; Escape closes it') : fail(`help button: ${h.help} → ${h2.help}, ${h2.state}`);
+  if (errs.length) fail('help page errors: ' + errs.join(' | '));
+  await hp.close();
 }
 
 // --- Power-ups ---
@@ -451,7 +559,7 @@ async function kamikaze(pg) {
   await pm.tap('#shareBtn');
   await sleep(300);
   const shared = await pm.evaluate(() => window.__shared && window.__shared.text);
-  const re = /^I got Pedro \d+\.\d\d miles toward game night\. Score: [\d,]+\. Beat that: https:\/\/brendonegouveia-ops\.github\.io\/pedro-game\/$/;
+  const re = /^Pedro wrecked \d+\.\d\d miles into Week 1, \d+\.\d\d mi short of game night\. Score: [\d,]+\. Beat that: https:\/\/brendonegouveia-ops\.github\.io\/pedro-game\/$/;
   re.test(shared || '') ? ok(`navigator.share payload: "${shared}"`) : fail('share payload: ' + shared);
   a = await pm.evaluate(() => window.__pedro.snapshot());
   a.state === 'over' ? ok('tapping Share does not restart the run') : fail('share tap restarted the run');
@@ -461,6 +569,7 @@ async function kamikaze(pg) {
 
   // Desktop: clipboard fallback
   const dctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, permissions: ['clipboard-read', 'clipboard-write'] });
+  await dctx.addInitScript(TEST_INIT);
   await dctx.route(cdnUrl, (route) => route.fulfill({ status: 200, body: localThree, headers: { 'Content-Type': 'application/javascript', 'Access-Control-Allow-Origin': '*' } }));
   const pd = await dctx.newPage();
   await pd.goto(pathToFileURL(path.join(root, 'index.html')).href + '?seed=5');
@@ -490,6 +599,7 @@ async function endRunQuickly(pg) {
 {
   // Local board
   const lctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await lctx.addInitScript(TEST_INIT);
   await lctx.route(cdnUrl, (route) => route.fulfill({ status: 200, body: localThree, headers: { 'Content-Type': 'application/javascript', 'Access-Control-Allow-Origin': '*' } }));
   const pl = await lctx.newPage();
   const errs = [];
@@ -530,15 +640,19 @@ async function endRunQuickly(pg) {
   if (errs.length) fail('leaderboard page errors: ' + errs.join(' | '));
   await lctx.close();
 }
-{
-  // Shared board: Supabase REST mocked in-memory; verifies the exact requests the game sends
+// Shared board: Supabase REST mocked in-memory; verifies the exact requests the game sends.
+// legacy = the table has no `week` column yet (before the README's ALTER TABLE): the game must fall back.
+async function sharedBoardTest(legacy) {
   const SB = 'https://test-project.supabase.co', KEY = 'sb_publishable_TESTKEY';
-  const db = [{ name: 'Vovó', score: 99999, miles: 12.5, created_at: '2026-01-01T00:00:00Z' }];
-  const seen = { get: 0, post: 0, problems: [] };
+  const db = [{ name: 'Vovó', score: 99999, miles: 12.5, week: 3, created_at: '2026-01-01T00:00:00Z' }];
+  if (legacy) delete db[0].week;
+  const seen = { get: 0, post: 0, problems: [], weekErrors: 0, bodies: [] };
   const sctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await sctx.addInitScript(TEST_INIT);
   await sctx.route(cdnUrl, (route) => route.fulfill({ status: 200, body: localThree, headers: { 'Content-Type': 'application/javascript', 'Access-Control-Allow-Origin': '*' } }));
   await sctx.route(SB + '/rest/v1/scores**', async (route) => {
     const req = route.request(), h = req.headers(), cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS' };
+    const json = { ...cors, 'Content-Type': 'application/json' };
     if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
     if (h.apikey !== KEY) seen.problems.push('missing apikey');
     if (h.authorization) seen.problems.push('publishable key must not be sent as Bearer');
@@ -546,14 +660,20 @@ async function endRunQuickly(pg) {
       seen.get++;
       const u = new URL(req.url());
       if (u.searchParams.get('order') !== 'score.desc,created_at.asc' || u.searchParams.get('limit') !== '10') seen.problems.push('bad query ' + u.search);
+      const cols = (u.searchParams.get('select') || '').split(',');
+      if (legacy && cols.includes('week')) { seen.weekErrors++; return route.fulfill({ status: 400, headers: json, body: JSON.stringify({ code: '42703', message: 'column scores.week does not exist' }) }); }
+      if (!legacy && !cols.includes('week')) seen.problems.push('GET without week column');
       const rows = [...db].sort((a, b) => b.score - a.score).slice(0, 10);
-      return route.fulfill({ status: 200, headers: { ...cors, 'Content-Type': 'application/json' }, body: JSON.stringify(rows) });
+      return route.fulfill({ status: 200, headers: json, body: JSON.stringify(rows) });
     }
     if (req.method() === 'POST') {
       seen.post++;
       const body = JSON.parse(req.postData() || '{}');
+      seen.bodies.push(body);
       if (h['content-type'] !== 'application/json' || h.prefer !== 'return=minimal') seen.problems.push('bad POST headers');
-      if (Object.keys(body).sort().join() !== 'miles,name,score' || typeof body.score !== 'number') seen.problems.push('bad body ' + JSON.stringify(body));
+      if (legacy && 'week' in body) { seen.weekErrors++; return route.fulfill({ status: 400, headers: json, body: JSON.stringify({ code: 'PGRST204', message: "Could not find the 'week' column of 'scores' in the schema cache" }) }); }
+      const want = legacy ? 'miles,name,score' : 'miles,name,score,week';
+      if (Object.keys(body).sort().join() !== want || typeof body.score !== 'number' || (!legacy && body.week !== 1)) seen.problems.push('bad body ' + JSON.stringify(body));
       db.push({ ...body, created_at: new Date().toISOString() });
       return route.fulfill({ status: 201, headers: cors, body: '' });
     }
@@ -567,18 +687,35 @@ async function endRunQuickly(pg) {
   await ps2.click('#lbSubmit');
   await ps2.waitForSelector('#boardList li.me', { timeout: 10000 }).catch(() => {});
   const txt = await ps2.evaluate(() => document.querySelector('.board').innerText.replace(/\s+/g, ' '));
-  await ps2.screenshot({ path: path.join(outDir, '14-leaderboard-shared.png') });
-  seen.post === 1 && seen.get >= 1 && !seen.problems.length && /EVERYONE/.test(txt) && /Vovó/.test(txt) && /Pedro/.test(txt)
-    ? ok(`shared board: POST + GET to Supabase REST with correct headers/query/body; shows everyone's scores ("${txt.slice(0, 80)}…")`)
-    : fail('shared board: ' + JSON.stringify({ seen, txt }));
+  await ps2.screenshot({ path: path.join(outDir, legacy ? '14b-leaderboard-no-week-column.png' : '14-leaderboard-shared.png') });
+  const stored = db.filter((r) => r.name === 'Pedro').length;
+  if (!legacy) {
+    seen.post === 1 && seen.get >= 1 && !seen.problems.length && /EVERYONE/.test(txt) && /Vovó/.test(txt) && /Week 3 · 12\.50 mi/.test(txt) && /Pedro/.test(txt) && /Week 1 ·/.test(txt)
+      ? ok(`shared board: POST {name, score, miles, week} + GET with week; rows show their week ("${txt.slice(0, 90)}…")`)
+      : fail('shared board: ' + JSON.stringify({ seen, txt }));
+  } else {
+    // a fresh page reading the board first (GET with week → 42703 → retry without)
+    await ps2.reload();
+    await ps2.waitForFunction(() => window.__pedro && window.__pedro.ready);
+    await ps2.click('#titleLbBtn');
+    await ps2.waitForFunction(() => /Pedro/.test(document.getElementById('boardList').innerText), null, { timeout: 8000 }).catch(() => {});
+    const txt2 = await ps2.evaluate(() => document.getElementById('boardList').innerText.replace(/\s+/g, ' '));
+    if (!/Vovó/.test(txt2) || !/Pedro/.test(txt2)) seen.problems.push('board after reload: ' + txt2);
+    stored === 1 && seen.weekErrors >= 2 && !seen.problems.length && /Vovó/.test(txt) && /Pedro/.test(txt) && !/Week/.test(txt)
+      ? ok(`no week column yet: insert and read fall back without it (${seen.weekErrors} rejected requests retried), board still works`)
+      : fail('legacy board: ' + JSON.stringify({ stored, seen, txt }));
+  }
   await sctx.close();
 }
+await sharedBoardTest(false);
+await sharedBoardTest(true);
 {
   // One-time upload of scores saved on this phone before the board went online
   const SB = 'https://test-project.supabase.co', KEY = 'sb_publishable_TESTKEY';
   const db = [{ name: 'Nick Super V6', score: 20414, miles: 7.02, created_at: '2026-01-01T00:00:00Z' }];   // already shared
   const posts = [];
   const mctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await mctx.addInitScript(TEST_INIT);
   await mctx.route(cdnUrl, (route) => route.fulfill({ status: 200, body: localThree, headers: { 'Content-Type': 'application/javascript', 'Access-Control-Allow-Origin': '*' } }));
   await mctx.route(SB + '/rest/v1/scores**', async (route) => {
     const req = route.request(), cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS' };

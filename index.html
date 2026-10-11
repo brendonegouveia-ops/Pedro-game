@@ -211,7 +211,6 @@
   .lb button:disabled { opacity: 0.5; }
   .lbMsg { min-height: 18px; margin-top: 6px; font-size: 13px; font-weight: 700; color: #ffe1a8; }
   .lbBtn { background: rgba(255,255,255,0.14); color: #fff; border: 2px solid rgba(255,255,255,0.5); border-radius: 999px; padding: 10px 18px; }
-  #titleLbBtn { margin-top: 14px; }
   #boardScreen { z-index: 40; pointer-events: auto; background: rgba(8,10,20,0.9); }
   .board { width: min(420px, 100%); background: rgba(20,24,40,0.95); border: 2px solid rgba(255,255,255,0.2); border-radius: 18px; padding: 14px 14px 12px; }
   .board h2 { margin: 0 0 2px; font-size: 26px; font-weight: 900; text-transform: uppercase; color: #ffd166; }
@@ -231,6 +230,38 @@
   .lbMigrate .lbBtn { background: rgba(255,255,255,0.14); color: #fff; border: 2px solid rgba(255,255,255,0.5); border-radius: 999px; }
   .board .errDetail { font-size: 11px; opacity: 0.6; padding-top: 0; font-family: ui-monospace, Menlo, monospace; word-break: break-word; }
   .board .empty { opacity: 0.7; padding: 16px 0; display: block; text-align: center; }
+
+  /* Week picker (title) */
+  .weekPick { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; pointer-events: auto; }
+  .wkBtn {
+    font: inherit; font-size: 18px; font-weight: 900; width: 44px; height: 44px; border-radius: 50%; cursor: pointer;
+    background: rgba(255,255,255,0.14); color: #fff; border: 2px solid rgba(255,255,255,0.5); padding: 0;
+  }
+  .wkBtn:disabled { opacity: 0.25; }
+  .wkInfo { min-width: 190px; background: rgba(10,12,22,0.6); border-radius: 14px; padding: 6px 12px; }
+  .wkInfo b { display: block; font-size: 22px; font-weight: 900; color: #ffd166; letter-spacing: 0.04em; }
+  .wkInfo small { display: block; font-size: 12px; font-weight: 700; opacity: 0.85; }
+  .titleBtns { display: flex; gap: 10px; margin-top: 14px; pointer-events: auto; }
+  /* Week complete (reuses the game-over screen) */
+  #overScreen.win .overTitle { color: #ffd166; text-shadow: 0 3px 0 #7a4b00, 0 6px 18px rgba(0,0,0,0.6); font-size: clamp(32px, 10vw, 60px); }
+  #overScreen.win .roast { color: #fff; font-size: 20px; }
+  #overScreen.win .roast::before { content: 'PEDRO'; display: block; font-size: 11px; letter-spacing: 0.14em; color: #ffd166; margin-bottom: 2px; }
+  .overSub { font-size: 13px; font-weight: 800; letter-spacing: 0.06em; opacity: 0.85; margin: -2px 0 8px; text-transform: uppercase; }
+  .bonusLine { font-size: 13px; font-weight: 800; color: #9ff0b8; margin: -6px 0 12px; }
+  /* How to play */
+  #helpScreen { z-index: 40; pointer-events: auto; background: rgba(8,10,20,0.92); justify-content: flex-start; touch-action: pan-y;
+    padding-top: calc(env(safe-area-inset-top) + 12px); padding-bottom: calc(env(safe-area-inset-bottom) + 12px); }
+  .help { width: min(440px, 100%); background: rgba(20,24,40,0.95); border: 2px solid rgba(255,255,255,0.2); border-radius: 18px;
+    padding: 14px 16px 12px; text-align: left; margin: auto 0; }
+  .help h2 { margin: 0 0 8px; font-size: 26px; font-weight: 900; text-transform: uppercase; color: #ffd166; text-align: center; }
+  .help h3 { margin: 12px 0 4px; font-size: 12px; letter-spacing: 0.12em; color: #ffd166; text-transform: uppercase; }
+  .help p { margin: 0 0 6px; font-size: 13.5px; line-height: 1.33; }
+  .help ul { list-style: none; margin: 0; padding: 0; }
+  .help li { display: grid; grid-template-columns: 30px 1fr; gap: 8px; align-items: center; font-size: 14px; line-height: 1.3; padding: 4px 0; }
+  .help li i { font-style: normal; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 14px; background: var(--pc); }
+  .help li b { font-weight: 900; }
+  .help .helpGo { position: sticky; bottom: 4px; box-shadow: 0 6px 24px rgba(0,0,0,0.6); display: block; margin: 12px auto 0; font: inherit; font-size: 17px; font-weight: 900; border: 0; border-radius: 999px;
+    padding: 12px 28px; cursor: pointer; background: linear-gradient(135deg, #ffd166, #ff9f43); color: #1a1030; }
 
   #debugPanel {
     position: fixed; left: 8px; bottom: calc(env(safe-area-inset-bottom) + 64px);
@@ -272,10 +303,15 @@
 
 <div id="titleScreen" class="layer screen">
   <h1 class="title">Pedro Makes It <span>to Game Night</span></h1>
-  <p class="sub">Game night at Carlson's (10 mi), then the Dunkin' stranger to CVS (15 mi), then Fall River (20 mi). Three chouriço links. One brand-new silver Jetta. Same driver.</p>
+  <p class="sub">Every week Pedro drives to game night at Carlson's. Every week the drive gets longer and faster. Three chouriço links. One brand-new silver Jetta. Same driver.</p>
+  <div class="weekPick" id="weekPick">
+    <button class="wkBtn" id="weekPrev" type="button" aria-label="Previous week">◀</button>
+    <div class="wkInfo"><b id="weekName">WEEK 1</b><small id="weekSub">10 mi · Catan night</small></div>
+    <button class="wkBtn" id="weekNext" type="button" aria-label="Next week">▶</button>
+  </div>
   <div class="cta">Tap / press any key to drive</div>
   <div class="best" id="titleBest">Best: 0</div>
-  <button class="lbBtn" id="titleLbBtn" type="button">🏆 Leaderboard</button>
+  <div class="titleBtns"><button class="lbBtn" id="helpBtn" type="button">❓ How to play</button><button class="lbBtn" id="titleLbBtn" type="button">🏆 Leaderboard</button></div>
   <div class="hint">Swipe or tap left / right to change lanes<br>Keyboard: ← → or A / D · P pause · M mute · N music</div>
 </div>
 
@@ -286,6 +322,7 @@
 
 <div id="overScreen" class="layer screen hidden">
   <div class="overTitle" id="overTitle">Wrecked</div>
+  <div class="overSub" id="overSub"></div>
   <p class="roast" id="overRoast"></p>
   <div class="newBest hidden" id="overNewBest">NEW BEST!</div>
   <div class="stats">
@@ -294,6 +331,7 @@
     <div class="stat"><small>BEST</small><b id="overBest">0</b></div>
   </div>
   <div class="overCoins" id="overCoins"></div>
+  <div class="bonusLine hidden" id="overBonus"></div>
   <div class="lb" id="lbForm">
     <div class="lbRow">
       <input id="lbName" type="text" maxlength="16" placeholder="Your name" autocomplete="nickname" autocapitalize="words" enterkeyhint="send" aria-label="Your name for the leaderboard">
@@ -301,8 +339,8 @@
     </div>
     <div class="lbMsg" id="lbMsg"></div>
   </div>
-  <div class="btnRow"><button class="shareBtn" id="shareBtn" type="button">Share</button><button class="lbBtn" id="overLbBtn" type="button">🏆 Board</button></div>
-  <div class="cta">Tap / Space to drive again</div>
+  <div class="btnRow"><button class="shareBtn" id="shareBtn" type="button">Share</button><button class="lbBtn" id="overLbBtn" type="button">🏆 Board</button><button class="lbBtn" id="overMenuBtn" type="button">Weeks</button></div>
+  <div class="cta" id="overCta">Tap / Space to drive again</div>
   <div class="seedline" id="overSeed"></div>
 </div>
 
@@ -322,6 +360,28 @@
   <svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M17 9l5 6M22 9l-5 6"/></svg>
 </button>
 <div id="toast" class="hidden"></div>
+
+<div id="helpScreen" class="layer screen hidden">
+  <div class="help">
+    <h2>How to play</h2>
+    <p>Get Pedro to game night at Carlson's. Each <b>week</b> is one drive: Week 1 is 10 miles, and every week after is longer and faster. Make it and the next week unlocks. You can replay any week you've reached.</p>
+    <h3>Driving</h3>
+    <p>Swipe or tap the left / right side of the screen to change lanes (keyboard: ← → or A / D). Dodge cars, trucks, cones and debris. A car with its blinker on is about to change lanes.</p>
+    <h3>Lives</h3>
+    <p>Pedro has <b>3 chouriço links</b> (bottom-left). Every hit costs one and dents the Jetta. Lose all three and the drive is over. You get all three back every week.</p>
+    <h3>Coins &amp; tailgaters</h3>
+    <p>🪙 Grab coins for points, and a whole trail for a bonus. Trails often run right at a car, so swerve out at the last second. When the <b>mirror</b> pops up at the top, tailgaters are coming from behind: a red dot in your lane means move.</p>
+    <h3>Power-ups</h3>
+    <ul>
+      <li><i style="--pc:#3aa0ff">🛡</i><span><b>Full Coverage:</b> absorbs one crash.</span></li>
+      <li><i style="--pc:#ff4b4b">⏱</i><span><b>Brake Check:</b> 4 s of slow motion.</span></li>
+      <li><i style="--pc:#ffd166">✨</i><span><b>Fresh Detail:</b> 5 s invincible. Traffic bounces off you.</span></li>
+      <li><i style="--pc:#ff7eb6">🍩</i><span><b>Donut:</b> 30% faster for 5 s, with more points per second.</span></li>
+      <li><i style="--pc:#ff6a45">❤</i><span><b>Chouriço</b> (rare): gives back a link and fixes some damage.</span></li>
+    </ul>
+    <button class="helpGo" id="helpClose" type="button">Got it</button>
+  </div>
+</div>
 
 <div id="boardScreen" class="layer screen hidden">
   <div class="board">
@@ -362,18 +422,20 @@ const CONFIG = {
   // --- Difficulty curve: [miles, difficulty 0..1], linearly interpolated.
   //     Starts at 0.22 (no warm-up), ~0.6 by mile 3, full brutality by mile 9.
   difficultyCurve: [[0, 0.22], [1, 0.4], [3, 0.62], [6, 0.85], [9, 1.0]],
-  // Goals, in order. Reaching one shows its banner, pays its bonus, and the HUD/signs switch to the next.
-  goals: [
-    { miles: 10, hud: 'TO GAME NIGHT', sign: 'GAME NIGHT', bonus: 3000, music: 'dubstep',
-      banner: ['Pedro made it', 'to game night!'], sub: "Carlson's house", next: "Drop the Dunkin' stranger at CVS",
-      line: 'Carlson! Turn it UP 🔊', share: 'game night', wrecked: 'Made it to game night… then wrecked' },
-    { miles: 15, hud: 'DROP-OFF AT CVS', sign: 'CVS', bonus: 5000,
-      banner: ["Dunkin' stranger", 'dropped at CVS!'], sub: 'Mission accomplished', next: 'Drive to Fall River',
-      line: 'Bro, I never even got his name', share: 'CVS (the Dunkin\' stranger says thanks)', wrecked: 'Dropped him at CVS… then wrecked' },
-    { miles: 20, hud: 'TO FALL RIVER', sign: 'FALL RIVER', bonus: 8000,
-      banner: ['Pedro made it', 'to Fall River!'], sub: 'Legend status', next: 'Keep driving for score',
-      line: "Fall River, we're SO back", share: 'Fall River', wrecked: 'Made it to Fall River… then wrecked' },
-  ],
+  // --- Weeks (levels). Every week is one drive to game night at Carlson's; finishing it unlocks the next.
+  //     Week 1 uses difficultyCurve as-is. Later weeks are longer, start further up the curve, and top out faster.
+  weekBaseMiles: 10,           // week 1 length
+  weekMilesStep: 2,            // each week is this much longer…
+  weekMaxMiles: 25,            // …up to this
+  weekDifficultyStep: 0.13,    // a week starts this much higher on the difficulty curve than the one before…
+  weekDifficultyCap: 0.85,     // …but never above this (so a fresh week never starts at full brutality)
+  weekTopSpeedStepMph: 3,      // top speed (maxSpeedMph in week 1) rises this much per week…
+  weekTopSpeedCapMph: 195,     // …up to this
+  weekBonus: [3000, 1000],     // finishing week w pays weekBonus[0] + weekBonus[1] × (w − 1)
+  weekLifeBonus: 500,          // plus this per chouriço link left
+  weekDropMiles: 2,            // the music builds and drops into dubstep this far from game night
+  weekFinishClearMeters: 200,  // no new traffic in the last stretch before Carlson's driveway
+  finishSec: 1.8,              // real seconds of coasting into game night before the week-complete screen
 
   // --- Camera ---
   fovBase: 62,
@@ -503,6 +565,8 @@ const ROASTS = [
   "Three chouriço links and he still couldn't make it.",
   "He said 'I can fix that.' He could not fix that.",
   "Pedro's Jetta is now a modern art piece.",
+  "{left} miles from game night. Carlson started without him.",
+  "Week {week}, same Pedro.",
 ];
 
 // Pedro's lines. Edit freely — Gen Z energy encouraged.
@@ -554,6 +618,39 @@ const DONUT_LINES = [
   "Donut stop me now",
   "Calories don't count at this speed",
 ];
+// Pedro's line when he makes it to game night ({week} = the week number):
+const WEEK_COMPLETE_LINES = [
+  "We're SO back 🔥",
+  "Ate and left no crumbs",
+  "That drive was bussin', no cap",
+  "Carlson, I'm outside 😤",
+  "Slay. Who's dealing?",
+  "Main character has arrived",
+  "Not me showing up on time 💅",
+  "It's giving punctual",
+  "Understood the assignment",
+  "Lowkey I'm him",
+  "W drive. Who brought snacks?",
+  "Week {week}? Light work.",
+  "The Jetta's mid but I'm elite",
+  "Delulu? Nah, I made it",
+  "Traffic was NOT the vibe. Anyway, I'm here",
+];
+// What's on the table each week (cycles). Shown on the title screen, HUD and week-complete screen.
+const GAME_NIGHTS = [
+  "Catan night",
+  "Poker night",
+  "Mario Kart night",
+  "Monopoly night (friendships will end)",
+  "Codenames night",
+  "Uno No Mercy night",
+  "Jackbox night",
+  "Risk night (it'll take 6 hours)",
+  "Settlers rematch",
+  "Smash Bros night",
+  "Exploding Kittens night",
+  "Cards Against Humanity night",
+];
 
 // ============================================================
 //  Pure helpers (shared with /tools)
@@ -576,8 +673,40 @@ const PedroCore = (() => {
   function lerp(a, b, t) { return a + (b - a) * t; }
   function clamp01(x) { return x < 0 ? 0 : x > 1 ? 1 : x; }
 
-  // difficulty(distanceMiles) -> 0..1
+  // ---------------- Weeks ----------------
+  // Week w starts at difficultyCurve's level for weekStartDifficulty(w) (an equivalent mile offset along the
+  // curve) and tops out at weekTopSpeedMph(w). Week 1 is exactly the plain curve. setWeek() switches weeks.
+  let weekNo = 1, weekOffsetMiles = 0, weekTopMph = CONFIG.maxSpeedMph;
+  function weekMiles(w) { return Math.min(CONFIG.weekBaseMiles + CONFIG.weekMilesStep * (w - 1), CONFIG.weekMaxMiles); }
+  function weekStartDifficulty(w) {
+    const d0 = CONFIG.difficultyCurve[0][1];
+    return Math.min(d0 + CONFIG.weekDifficultyStep * (w - 1), Math.max(d0, CONFIG.weekDifficultyCap));
+  }
+  function weekTopSpeedMph(w) {
+    return Math.max(CONFIG.maxSpeedMph, Math.min(CONFIG.maxSpeedMph + CONFIG.weekTopSpeedStepMph * (w - 1), CONFIG.weekTopSpeedCapMph));
+  }
+  // first distance (miles) at which the plain curve reaches d
+  function curveMilesAt(d) {
+    const pts = CONFIG.difficultyCurve;
+    if (d <= pts[0][1]) return pts[0][0];
+    for (let i = 1; i < pts.length; i++) {
+      if (d <= pts[i][1]) return pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * (d - pts[i - 1][1]) / (pts[i][1] - pts[i - 1][1]);
+    }
+    return pts[pts.length - 1][0];
+  }
+  function setWeek(w) {
+    weekNo = Math.max(1, Math.floor(w) || 1);
+    weekOffsetMiles = curveMilesAt(weekStartDifficulty(weekNo));
+    weekTopMph = weekTopSpeedMph(weekNo);
+    return weekNo;
+  }
+  function week() { return weekNo; }
+  function weekOffset() { return weekOffsetMiles; }
+  function topSpeedMph() { return weekTopMph; }
+
+  // difficulty(distanceMiles into this week's drive) -> 0..1
   function difficulty(miles) {
+    miles += weekOffsetMiles;
     const pts = CONFIG.difficultyCurve;
     if (miles <= pts[0][0]) return pts[0][1];
     for (let i = 1; i < pts.length; i++) {
@@ -590,7 +719,7 @@ const PedroCore = (() => {
   }
 
   function speedMph(miles) {
-    return lerp(CONFIG.startSpeedMph, CONFIG.maxSpeedMph, difficulty(miles));
+    return lerp(CONFIG.startSpeedMph, weekTopMph, difficulty(miles));
   }
   // speed in meters/second at a given distance (meters)
   function speedAt(meters) { return speedMph(meters / METERS_PER_MILE) * MPH_TO_MPS; }
@@ -657,7 +786,8 @@ const PedroCore = (() => {
   // Rows never overlap in sigma and every hazard (incl. lane-changers on both lanes and
   // tailgaters) lies inside its row's span, so (1)+(2) chain into a survivable path.
   // A row that fails is regenerated; after maxRowAttempts it becomes an empty row.
-  function createSpawner(seed, startLane, startSigma) {
+  // endSigma (optional): stop adding rows weekFinishClearMeters before it (the finish line).
+  function createSpawner(seed, startLane, startSigma, endSigma) {
     const rng = mulberry32(seed);
     const POOL = 320, ROWS = 48, RECENT = 96;
     const hazards = [];
@@ -682,6 +812,7 @@ const PedroCore = (() => {
       seed, rng, hazards, rows, rowCount: 0, lastB: (startSigma || 0) + CONFIG.startClearMeters, lastG: startLane,
       fallbacks: 0, retries: 0, nextId: 1, lastPowerSigma: -Infinity, nextTrail: 1,
       horizon: CONFIG.spawnAheadMeters / (1 - CONFIG.trafficSpeedFrac),
+      stopAt: endSigma ? endSigma - CONFIG.weekFinishClearMeters : Infinity,
     };
 
     // Power-up shuffle bag (see CONFIG.powerupBag)
@@ -734,7 +865,8 @@ const PedroCore = (() => {
 
     // Build one row. Returns the committed row record.
     function generateRow() {
-      const B0 = st.lastB, miles = B0 / METERS_PER_MILE, d = difficulty(miles);
+      // `miles` (for unlocks) counts the week's head start along the curve, so later weeks open with everything unlocked
+      const B0 = st.lastB, d = difficulty(B0 / METERS_PER_MILE), miles = B0 / METERS_PER_MILE + weekOffsetMiles;
       const gapSec = lerp(CONFIG.rowGapSec[0], CONFIG.rowGapSec[1], d) * (1 + (rng() * 2 - 1) * CONFIG.rowGapJitter);
       const gapSigma = gapSec * speedAt(B0);
       const A = B0 + gapSigma;
@@ -884,7 +1016,7 @@ const PedroCore = (() => {
     // Generate rows until the horizon is covered.
     st.ensure = function (sigmaNow) {
       let n = 0;
-      while (st.lastB < sigmaNow + st.horizon && n < 16) { generateRow(); n++; }
+      while (st.lastB < Math.min(sigmaNow + st.horizon, st.stopAt) && n < 16) { generateRow(); n++; }
       return n;
     };
     st.generateRow = generateRow;
@@ -892,6 +1024,7 @@ const PedroCore = (() => {
   }
 
   return { METERS_PER_MILE, MPH_TO_MPS, mulberry32, lerp, clamp01, difficulty, speedMph, speedAt, laneX,
+    setWeek, week, weekOffset, weekMiles, weekStartDifficulty, weekTopSpeedMph, topSpeedMph,
     T, TYPE_NAMES, typeK, typeSize, halfSpan, laneChangeSec, ghostConflict, createSpawner };
 })();
 if (typeof window !== 'undefined') window.PedroCore = PedroCore;
@@ -1955,13 +2088,10 @@ const signs = (() => {
     g2.fillStyle = '#1d7a45'; g2.fillRect(0, 0, 512, 160);
     g2.strokeStyle = '#f2f2f2'; g2.lineWidth = 6; g2.strokeRect(8, 8, 496, 144);
     g2.fillStyle = '#ffffff'; g2.textAlign = 'center'; g2.textBaseline = 'middle';
-    // sign at mile `mi` points at the next goal at or beyond it
-    let goal = null;
-    for (const gl of C.goals) if (gl.miles >= mi) { goal = gl; break; }
-    const last = C.goals[C.goals.length - 1];
-    const line1 = goal ? goal.sign : last.sign;
-    const d = goal ? goal.miles - mi : mi - last.miles;
-    const line2 = goal ? (d === 0 ? 'EXIT NOW →' : d + (d === 1 ? ' MILE' : ' MILES')) : d + ' MI BEHIND YOU';
+    // sign at mile `mi` counts down to this week's game night
+    const d = game.weekMiles - mi;
+    const line1 = d <= 0 ? "CARLSON'S" : 'GAME NIGHT';
+    const line2 = d <= 0 ? 'EXIT NOW →' : d + (d === 1 ? ' MILE' : ' MILES');
     g2.font = '900 54px -apple-system, Helvetica, Arial, sans-serif';
     g2.fillText(line1, 256, 58);
     g2.font = '800 40px -apple-system, Helvetica, Arial, sans-serif';
@@ -1979,7 +2109,7 @@ const signs = (() => {
     update(sigma) {
       const z = -(atSigma - sigma);
       if (z > 30) { mile++; atSigma = mile * Core.METERS_PER_MILE; draw(mile); return; }
-      group.visible = z > -C.fogFar - 20;
+      group.visible = z > -C.fogFar - 20 && mile <= game.weekMiles;
       group.position.z = z;
     },
     hide() { group.visible = false; },
@@ -1994,6 +2124,27 @@ const URL_SEED = (() => {
   return Number.isFinite(n) ? n >>> 0 : null;
 })();
 
+// Week progress: the highest unlocked week and the one picked on the title screen.
+// ?debug&week=N jumps to week N (testing aid).
+function gameNight(w) { return GAME_NIGHTS[(w - 1) % GAME_NIGHTS.length]; }
+const progress = {
+  max: Math.max(1, parseInt(store.get('pedro.week.max', '1'), 10) || 1),
+  sel: 1,
+};
+progress.sel = Math.min(progress.max, Math.max(1, parseInt(store.get('pedro.week.sel', String(progress.max)), 10) || progress.max));
+{
+  const dw = parseInt(new URLSearchParams(location.search).get('week'), 10);
+  if (DEBUG && dw > 0) { progress.sel = dw; progress.max = Math.max(progress.max, dw); }
+}
+function unlockWeek(w) {
+  if (w > progress.max) { progress.max = w; store.set('pedro.week.max', w); }
+}
+function selectWeek(w) {
+  progress.sel = Math.min(progress.max, Math.max(1, w));
+  store.set('pedro.week.sel', progress.sel);
+  if (ui.weekName) refreshWeekPick();
+}
+
 // ?debug&start=2.5 begins runs at mile 2.5 (testing aid)
 const START_SIGMA = (() => {
   const v = parseFloat(new URLSearchParams(location.search).get('start'));
@@ -2002,7 +2153,7 @@ const START_SIGMA = (() => {
 
 let urlSeedUsed = false;
 const game = {
-  state: 'title',        // title | play | crashing | over | paused
+  state: 'title',        // title | play | crashing | finishing | over | paused
   prevState: 'title',
   seed: 0,
   spawner: null,
@@ -2015,7 +2166,8 @@ const game = {
   spin: 0, slide: 0,
   tgCount: 0, tgLane: new Int8Array(6), tgAhead: new Float32Array(6),
   nearMisses: 0,
-  goal: 0,               // index of the next goal (C.goals.length = all done)
+  week: 1, weekMiles: C.weekBaseMiles, goalSigma: 0, dropped: false,
+  result: '',            // 'wrecked' | 'complete' once the run is over
   coins: 0, trail: 0, trailGot: 0,
   shield: false,
   effect: -1, effectT: 0, effectDur: 1,
@@ -2035,21 +2187,23 @@ function resetRun() {
   // ?seed=N replays that exact run once; restarts get fresh randomness again
   game.seed = URL_SEED !== null && !urlSeedUsed ? URL_SEED : (Math.random() * 4294967296) >>> 0;
   if (URL_SEED !== null) urlSeedUsed = true;
-  game.spawner = Core.createSpawner(game.seed, C.startLane, START_SIGMA);
-  game.sigma = START_SIGMA; game.time = 0; game.score = 0; game.crashT = 0; game.spin = 0; game.slide = 0;
+  game.week = Core.setWeek(game.week);
+  game.weekMiles = Core.weekMiles(game.week);
+  game.goalSigma = game.weekMiles * Core.METERS_PER_MILE;
+  const start = Math.min(START_SIGMA, game.goalSigma - 100);    // ?debug&start=N stays inside the week
+  game.spawner = Core.createSpawner(game.seed, C.startLane, start, game.goalSigma);
+  game.sigma = start; game.time = 0; game.score = 0; game.crashT = 0; game.spin = 0; game.slide = 0;
   game.nearMisses = 0; game.laneLeftAt.fill(-99);
   game.coins = 0; game.trail = 0; game.trailGot = 0;
-  // ?debug&start=N: goals already behind the start count as reached (no banner spam)
-  game.goal = 0;
-  while (game.goal < C.goals.length && C.goals[game.goal].miles * Core.METERS_PER_MILE <= START_SIGMA) game.goal++;
-  let style = 'folk';
-  for (let i = 0; i < game.goal; i++) if (C.goals[i].music) style = C.goals[i].music;
-  Sfx.setStyle(style, true);
+  // ?debug&start=N past the drop point starts in dubstep (no build)
+  game.dropped = start >= game.goalSigma - C.weekDropMiles * Core.METERS_PER_MILE;
+  game.result = '';
+  Sfx.setStyle(game.dropped ? 'dubstep' : 'folk', true);
   game.shield = false; game.effect = -1; game.effectT = 0; game.invulnT = 0; game.plowed = 0; game.powerups = 0;
   game.lives = C.lives; game.hits = 0; game.shakeT = 0;
   setDamage(0);
   hideSpeech();
-  signs.reset(START_SIGMA);
+  signs.reset(start);
   ui.banner.classList.add('hidden');
   player.lane = C.startLane; player.x = player.fromX = laneX(C.startLane); player.t = 1; player.queued = 0; player.bumpT = 0;
   player.group.rotation.set(0, 0, 0);
@@ -2057,6 +2211,8 @@ function resetRun() {
 }
 
 function startRun() {
+  closeHelp();
+  game.week = progress.sel;
   resetRun();
   game.state = 'play';
   ui.title.classList.add('hidden');
@@ -2066,7 +2222,7 @@ function startRun() {
   ui.lives.classList.remove('hidden');
   hudCache.lives = -1;
   resetMirror();
-  hudCache.score = hudCache.miles = hudCache.mph = -1; hudCache.past = null; hudCache.coins = -1; hudCache.effect = -2; hudCache.shield = null; hudCache.bar = -1;
+  hudCache.score = hudCache.miles = hudCache.mph = -1; hudCache.past = -1; hudCache.coins = -1; hudCache.effect = -2; hudCache.shield = null; hudCache.bar = -1;
 }
 
 function crash(h, hx) {
@@ -2084,22 +2240,32 @@ function crash(h, hx) {
   ui.pauseBtn.classList.add('hidden');
 }
 
-function gameOver() {
+function gameOver() { endRun('wrecked'); }
+function endRun(result) {
   game.state = 'over';
+  game.result = result;
   game.overAt = performance.now();
+  const won = result === 'complete';
   const score = Math.floor(game.score);
   const miles = game.sigma / Core.METERS_PER_MILE;
+  const left = Math.max(0, game.weekMiles - miles);
   const isBest = score > bestScore;
   if (isBest) { bestScore = score; store.set('pedro.best', bestScore); }
-  const roast = ROASTS[Math.floor(Math.random() * ROASTS.length)]
-    .replace(/\{miles\}/g, miles.toFixed(2)).replace(/\{score\}/g, score.toLocaleString());
-  ui.overRoast.textContent = roast;
+  const fill = (t) => t.replace(/\{miles\}/g, miles.toFixed(2)).replace(/\{score\}/g, score.toLocaleString())
+    .replace(/\{left\}/g, left.toFixed(2)).replace(/\{week\}/g, game.week);
+  const line = won ? game.winLine : fill(ROASTS[Math.floor(Math.random() * ROASTS.length)]);
+  ui.over.classList.toggle('win', won);
+  ui.overTitle.textContent = won ? 'Week ' + game.week + ' complete!' : 'Wrecked';
+  ui.overSub.textContent = won ? 'Made it to ' + gameNight(game.week) + " at Carlson's" : 'Week ' + game.week + ' · ' + left.toFixed(2) + ' mi short of game night';
+  ui.overRoast.textContent = line;
   ui.overScore.textContent = score.toLocaleString();
   ui.overMiles.textContent = miles.toFixed(2) + ' mi';
   ui.overBest.textContent = bestScore.toLocaleString();
   ui.overNewBest.classList.toggle('hidden', !isBest);
-  ui.overTitle.textContent = game.goal > 0 ? C.goals[game.goal - 1].wrecked : 'Wrecked';
   ui.overCoins.textContent = '🪙 ' + game.coins + (game.coins === 1 ? ' coin' : ' coins');
+  ui.overBonus.classList.toggle('hidden', !won);
+  if (won) ui.overBonus.textContent = 'Game night bonus +' + game.weekBonus.toLocaleString() + (game.lifeBonus ? ' · Links left +' + game.lifeBonus.toLocaleString() : '');
+  ui.overCta.textContent = won ? 'Tap / Space: Week ' + (game.week + 1) + ' ▶' : 'Tap / Space to retry Week ' + game.week;
   ui.banner.classList.add('hidden');
   ui.overSeed.textContent = 'Seed ' + game.seed + ' — replay this exact run with ?seed=' + game.seed;
   ui.titleBest.textContent = 'Best: ' + bestScore.toLocaleString();
@@ -2107,14 +2273,16 @@ function gameOver() {
   ui.slowmoFx.classList.add('hidden'); ui.invulnFx.classList.add('hidden');
   hideSpeech();
   ui.over.classList.remove('hidden');
-  game.lastRoast = roast;
-  game.finalScore = score; game.finalMiles = miles;
+  game.lastRoast = line;
+  game.finalScore = score; game.finalMiles = miles; game.finalWeek = game.week;
   lastSubmitted = null;
   ui.lbForm.classList.toggle('hidden', score <= 0);
   ui.lbSubmit.disabled = false; ui.lbName.disabled = false;
   ui.lbName.value = store.get('pedro.name', '');
   ui.lbMsg.textContent = Board.shared ? 'Add your score to the leaderboard?' : "Add your score to this phone's leaderboard?";
-  game.shareText = 'I got Pedro ' + miles.toFixed(2) + ' miles ' + (game.goal > 0 ? 'and made it to ' + C.goals[game.goal - 1].share : 'toward game night') +
+  game.shareText = (won
+    ? 'Pedro made it to game night! Week ' + game.week + ' (' + game.weekMiles + ' mi) done'
+    : 'Pedro wrecked ' + miles.toFixed(2) + ' miles into Week ' + game.week + ', ' + left.toFixed(2) + ' mi short of game night') +
     '. Score: ' + score.toLocaleString() + '. Beat that: ' + C.shareUrl;
 }
 
@@ -2154,18 +2322,20 @@ const ui = {
   mirrorPedro: document.querySelector('#mirror .mpedro'),
   score: $('hudScoreVal'), miles: $('hudMilesVal'), milesLabel: $('hudMilesLabel'), speed: $('hudSpeedVal'),
   titleBest: $('titleBest'), debug: $('debugPanel'),
+  overSub: $('overSub'), overBonus: $('overBonus'), overCta: $('overCta'),
+  weekName: $('weekName'), weekSub: $('weekSub'), weekPrev: $('weekPrev'), weekNext: $('weekNext'),
+  help: $('helpScreen'),
 };
 ui.titleBest.textContent = 'Best: ' + bestScore.toLocaleString();
 if (DEBUG) ui.debug.classList.remove('hidden');
 
-const hudCache = { score: -1, miles: -1, mph: -1, past: null, effect: -2, bar: -1, shield: null, fx: -2, lives: -1 };
+const hudCache = { score: -1, miles: -1, mph: -1, past: -1, effect: -2, bar: -1, shield: null, fx: -2, lives: -1 };
 function updateHud() {
   const s = Math.floor(game.score);
   if (s !== hudCache.score) { hudCache.score = s; ui.score.textContent = s.toLocaleString(); }
   const miles = game.sigma / Core.METERS_PER_MILE;
-  const last = C.goals[C.goals.length - 1], next = C.goals[game.goal];
-  if (game.goal !== hudCache.past) { hudCache.past = game.goal; ui.milesLabel.textContent = next ? next.hud : 'PAST ' + last.sign; }
-  const m = Math.floor(Math.abs((next ? next.miles : last.miles) - miles) * 100);
+  if (game.week !== hudCache.past) { hudCache.past = game.week; ui.milesLabel.textContent = 'WEEK ' + game.week + ' · TO GAME NIGHT'; }
+  const m = Math.max(0, Math.ceil((game.weekMiles - miles) * 100));
   if (game.coins !== hudCache.coins) { hudCache.coins = game.coins; ui.hudCoins.textContent = game.coins; }
   if (m !== hudCache.miles) { hudCache.miles = m; ui.miles.textContent = (m / 100).toFixed(2) + ' mi'; }
   if (game.lives !== hudCache.lives) {
@@ -2201,20 +2371,27 @@ function updateHud() {
 
 // ---------- Input ----------
 // Taps/keys on UI (buttons, the name field, the leaderboard) never drive or restart the car.
-const UI_SEL = 'button, a, input, .lb, #boardScreen';
+const UI_SEL = 'button, a, input, .lb, .weekPick, #boardScreen, #helpScreen';
 const onUi = (e) => e.target && e.target.closest && e.target.closest(UI_SEL);
 function onAnyStartInput(isKey, key) {
-  if (boardOpen) return true;
-  if (game.state === 'title') { startRun(); return true; }
+  if (boardOpen || helpOpen) return true;
+  if (game.state === 'title') {
+    // ← / → pick the week on the title screen once more than one is unlocked
+    if (isKey && progress.max > 1 && /^(ArrowLeft|ArrowRight|a|A|d|D)$/.test(key)) { selectWeek(progress.sel + (/^(ArrowRight|d|D)$/.test(key) ? 1 : -1)); return true; }
+    startRun(); return true;
+  }
   if (game.state === 'paused') { resume(); return true; }
   if (game.state === 'over') {
     const a = document.activeElement;
     if (a && a.tagName === 'INPUT') { a.blur(); return true; }     // first tap just closes the keyboard
     const ready = performance.now() - game.overAt > C.restartLockSec * 1000;
-    if (ready && (!isKey || key === ' ' || key === 'Enter')) startRun();
+    if (ready && (!isKey || key === ' ' || key === 'Enter')) {
+      if (game.result === 'complete') selectWeek(game.week + 1);     // checkpoint: next week; a wreck retries this one
+      startRun();
+    }
     return true;
   }
-  if (game.state === 'crashing') return true;
+  if (game.state === 'crashing' || game.state === 'finishing') return true;
   return false;
 }
 window.addEventListener('keydown', (e) => {
@@ -2223,6 +2400,7 @@ window.addEventListener('keydown', (e) => {
   Sfx.unlock();
   const k = e.key;
   if (boardOpen) { if (k === 'Escape' || k === 'Enter' || k === ' ') { e.preventDefault(); closeBoard(); } return; }
+  if (helpOpen) { if (k === 'Escape' || k === 'Enter' || k === ' ') { e.preventDefault(); closeHelp(); } return; }
   if (k === 'm' || k === 'M') { toggleMute(); return; }
   if (k === 'n' || k === 'N') { toggleMusic(); return; }
   if (k === 'ArrowLeft' || k === 'ArrowRight' || k === ' ' || k === 'ArrowUp' || k === 'ArrowDown') e.preventDefault();
@@ -2242,7 +2420,7 @@ window.addEventListener('touchstart', (e) => {
   if (onAnyStartInput()) touch.consumed = true;
 }, { passive: false });
 window.addEventListener('touchmove', (e) => {
-  if (e.target && e.target.closest && e.target.closest('#boardScreen')) return;   // let the board scroll
+  if (e.target && e.target.closest && e.target.closest('#boardScreen, #helpScreen')) return;   // let the board / help scroll
   e.preventDefault();
   if (touch.consumed || touch.id === null) return;
   for (const t of e.changedTouches) {
@@ -2375,19 +2553,34 @@ const Board = (() => {
     if (!r.ok) throw await failure(r);
     return r;
   }
+  // The `week` column was added later (README SQL). Until it exists, read and write without it.
+  let hasWeek = true;
+  const noWeekColumn = (e) => (e.code === '42703' || e.code === 'PGRST204' || e.status === 400) && /week/i.test(e.message || '');
   async function top() {
     if (!shared) return readLocal().sort((a, b) => b.score - a.score).slice(0, C.leaderboardSize);
-    const r = await call('/rest/v1/scores?select=name,score,miles,created_at&order=score.desc,created_at.asc&limit=' + C.leaderboardSize,
+    const q = (cols) => call('/rest/v1/scores?select=' + cols + '&order=score.desc,created_at.asc&limit=' + C.leaderboardSize,
       { headers: headers(), cache: 'no-store' });
+    let r;
+    if (hasWeek) {
+      try { r = await q('name,score,miles,week,created_at'); }
+      catch (e) { if (!noWeekColumn(e)) throw e; hasWeek = false; }
+    }
+    if (!r) r = await q('name,score,miles,created_at');
     return r.json();
   }
-  async function submit(name, score, miles) {
-    const row = { name: clean(name), score: Math.max(0, Math.floor(score)), miles: Math.round(miles * 100) / 100 };
+  async function submit(name, score, miles, week) {
+    const row = { name: clean(name), score: Math.max(0, Math.floor(score)), miles: Math.round(miles * 100) / 100, week: Math.max(1, Math.floor(week) || 1) };
     if (!row.name) throw new Error('Enter a name first');
     if (shared) {
-      await call('/rest/v1/scores', {
-        method: 'POST', headers: headers({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }), body: JSON.stringify(row),
+      const post = (r) => call('/rest/v1/scores', {
+        method: 'POST', headers: headers({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }), body: JSON.stringify(r),
       });
+      if (hasWeek) {
+        try { await post(row); return row; }
+        catch (e) { if (!noWeekColumn(e)) throw e; hasWeek = false; }
+      }
+      const { week: _w, ...noWeek } = row;
+      await post(noWeek);
     } else {
       const a = readLocal();
       a.push(Object.assign({ created_at: new Date().toISOString() }, row));
@@ -2428,7 +2621,7 @@ const Board = (() => {
     store.set(MIGRATED, 'done');
     return fresh.length;
   }
-  return { shared, top, submit, clean, pendingLocal, migrate,
+  return { shared, top, submit, clean, pendingLocal, migrate, hasWeek: () => hasWeek,
     migrationState: () => store.get(MIGRATED, ''), skipMigration: () => store.set(MIGRATED, 'skipped') };
 })();
 
@@ -2488,7 +2681,8 @@ async function openBoard() {
     const rank = document.createElement('b'); rank.textContent = (i + 1) + '.';
     const nm = document.createElement('span'); nm.textContent = r.name;
     const sc = document.createElement('em'); sc.textContent = Number(r.score).toLocaleString();
-    const mi = document.createElement('small'); mi.textContent = Number(r.miles).toFixed(2) + ' mi';
+    const mi = document.createElement('small');
+    mi.textContent = (r.week !== undefined || !Board.shared ? 'Week ' + (Number(r.week) || 1) + ' · ' : '') + Number(r.miles).toFixed(2) + ' mi';
     sc.appendChild(mi);
     el.append(rank, nm, sc);
     if (!marked && lastSubmitted && r.name === lastSubmitted.name && Number(r.score) === lastSubmitted.score) { el.className = 'me'; marked = true; }
@@ -2497,7 +2691,7 @@ async function openBoard() {
 }
 function closeBoard() { boardOpen = false; ui.board.classList.add('hidden'); }
 // One-time prompt: phones with scores saved before the board went online get asked once, on the title screen.
-if (Board.pendingLocal().length && Board.migrationState() === '') setTimeout(() => { if (game.state === 'title') openBoard(); }, 600);
+if (Board.pendingLocal().length && Board.migrationState() === '') setTimeout(() => { if (game.state === 'title' && !helpOpen) openBoard(); }, 600);
 
 async function submitScore() {
   if (ui.lbSubmit.disabled) return;
@@ -2506,7 +2700,7 @@ async function submitScore() {
   ui.lbSubmit.disabled = true; ui.lbName.disabled = true;
   ui.lbMsg.textContent = 'Saving…';
   try {
-    lastSubmitted = await Board.submit(name, game.finalScore, game.finalMiles);
+    lastSubmitted = await Board.submit(name, game.finalScore, game.finalMiles, game.finalWeek);
     store.set('pedro.name', name);
     ui.lbMsg.textContent = 'Added as ' + name + '!';
     ui.lbName.blur();
@@ -2521,6 +2715,47 @@ ui.lbName.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preven
 $('titleLbBtn').addEventListener('click', (e) => { e.stopPropagation(); openBoard(); });
 $('overLbBtn').addEventListener('click', (e) => { e.stopPropagation(); openBoard(); });
 $('boardClose').addEventListener('click', (e) => { e.stopPropagation(); closeBoard(); });
+
+// ---------- Week picker + How to play ----------
+function refreshWeekPick() {
+  const w = progress.sel;
+  ui.weekName.textContent = 'WEEK ' + w;
+  ui.weekSub.textContent = Core.weekMiles(w) + ' mi · ' + gameNight(w);
+  ui.weekPrev.disabled = w <= 1;
+  ui.weekNext.disabled = w >= progress.max;
+  ui.weekNext.setAttribute('aria-label', w >= progress.max ? 'Week ' + (w + 1) + ' is locked' : 'Next week');
+}
+refreshWeekPick();
+ui.weekPrev.addEventListener('click', (e) => { e.stopPropagation(); selectWeek(progress.sel - 1); ui.weekPrev.blur(); });
+ui.weekNext.addEventListener('click', (e) => { e.stopPropagation(); selectWeek(progress.sel + 1); ui.weekNext.blur(); });
+let helpOpen = false;
+function openHelp() { helpOpen = true; ui.help.classList.remove('hidden'); ui.help.scrollTop = 0; }
+function closeHelp() {
+  if (!helpOpen) return;
+  helpOpen = false; ui.help.classList.add('hidden');
+  store.set('pedro.help', '1');
+}
+$('helpBtn').addEventListener('click', (e) => { e.stopPropagation(); openHelp(); });
+$('helpClose').addEventListener('click', (e) => { e.stopPropagation(); closeHelp(); });
+// First visit: explain the rules before the first drive
+if (store.get('pedro.help', '') !== '1') openHelp();
+function toTitle() {
+  releaseAllHazards();
+  game.state = 'title';
+  ui.over.classList.add('hidden'); ui.hud.classList.add('hidden'); ui.lives.classList.add('hidden'); ui.pauseBtn.classList.add('hidden');
+  resetMirror();
+  setDamage(0);
+  player.group.rotation.set(0, 0, 0); player.lane = C.startLane; player.x = player.fromX = laneX(C.startLane); player.t = 1;
+  game.mph = C.startSpeedMph;
+  signs.hide(); hideSpeech(); ui.banner.classList.add('hidden');
+  refreshWeekPick();
+  ui.title.classList.remove('hidden');
+}
+$('overMenuBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (game.result === 'complete') selectWeek(game.week + 1);
+  toTitle();
+});
 
 
 // ---------- Camera ----------
@@ -2797,19 +3032,34 @@ for (let i = 0; i < 36; i++) {
   ui.confetti.appendChild(c);
 }
 let bannerTimer = 0;
-function hitGoal(i) {
-  const g = C.goals[i];
-  game.goal = i + 1;
-  game.score += g.bonus;
-  ui.bannerB1.textContent = g.banner[0];
-  ui.bannerB2.textContent = g.banner[1];
-  ui.bannerSub.textContent = g.sub + ' · +' + g.bonus.toLocaleString() + ' · Next: ' + g.next;
+function showBanner(b1, b2, sub) {
+  ui.bannerB1.textContent = b1;
+  ui.bannerB2.textContent = b2;
+  ui.bannerSub.textContent = sub;
   ui.banner.classList.remove('hidden');
-  if (g.line) say(g.line, true);
-  if (g.music) Sfx.setStyle(g.music);
-  ui.confetti.classList.remove('go'); void ui.confetti.offsetWidth; ui.confetti.classList.add('go');
   clearTimeout(bannerTimer);
   bannerTimer = setTimeout(() => { ui.banner.classList.add('hidden'); ui.confetti.classList.remove('go'); }, C.bannerSec * 1000);
+}
+// Last stretch of the week: Carlson turns the music up (build → dubstep drop).
+function dropMusic() {
+  game.dropped = true;
+  Sfx.setStyle('dubstep');
+  showBanner('Final stretch', C.weekDropMiles + ' miles to go', "Carlson's got the speakers going 🔊");
+}
+// Crossing into Carlson's driveway: bonus, unlock the next week, coast in, then the week-complete screen.
+function finishWeek() {
+  game.state = 'finishing';
+  game.crashT = 0;
+  game.weekBonus = C.weekBonus[0] + C.weekBonus[1] * (game.week - 1);
+  game.lifeBonus = C.weekLifeBonus * game.lives;
+  game.score += game.weekBonus + game.lifeBonus;
+  unlockWeek(game.week + 1);
+  game.winLine = WEEK_COMPLETE_LINES[Math.floor(Math.random() * WEEK_COMPLETE_LINES.length)].replace(/\{week\}/g, game.week);
+  say(game.winLine, true);
+  showBanner('Pedro made it', 'to game night!', 'Week ' + game.week + ' · ' + gameNight(game.week));
+  ui.confetti.classList.remove('go'); void ui.confetti.offsetWidth; ui.confetti.classList.add('go');
+  ui.pauseBtn.classList.add('hidden');
+  game.effect = -1; game.effectT = 0;
   if (window.__pedroAudio) window.__pedroAudio.fanfare();
 }
 
@@ -2907,20 +3157,24 @@ function frame(now) {
 function update(realDt) {
   if (game.state === 'paused') return;
   const miles = game.sigma / Core.METERS_PER_MILE;
-  if (game.state === 'play' || game.state === 'crashing') {
-    const crashing = game.state === 'crashing';
+  if (game.state === 'play' || game.state === 'crashing' || game.state === 'finishing') {
+    const crashing = game.state === 'crashing', finishing = game.state === 'finishing';
     const dtGame = realDt * (crashing ? C.crashSlowmo : worldTimeScale());
-    game.mph = Core.speedMph(miles);
+    if (!finishing) game.mph = Core.speedMph(miles);
     let v = game.mph * speedMult() * Core.MPH_TO_MPS;
     if (crashing) v *= Math.max(0, 1 - game.crashT / 0.5);
+    if (finishing) v *= Math.max(0.15, 1 - game.crashT / C.finishSec);
     const d = v * dtGame;
     game.sigma += d;
     game.time += dtGame;
     scrollRoad(d);
-    if (!crashing) {
+    if (finishing) {
+      updatePlayer(realDt);
+    } else if (!crashing) {
       game.spawner.ensure(game.sigma);
       game.score += d * C.pointsPerMeter * (game.mph * speedMult() / C.startSpeedMph) * scoreMultiplier();
-      if (game.goal < C.goals.length && game.sigma >= C.goals[game.goal].miles * Core.METERS_PER_MILE) hitGoal(game.goal);
+      if (!game.dropped && game.sigma >= game.goalSigma - C.weekDropMiles * Core.METERS_PER_MILE) dropMusic();
+      if (game.sigma >= game.goalSigma) finishWeek();
       updatePlayer(realDt);
     } else {
       player.group.rotation.y += game.spin * dtGame * 2.2;
@@ -2930,8 +3184,9 @@ function update(realDt) {
     }
     updateHazards(dtGame, realDt);
     updateSmoke(realDt, player.damageStage);
-    if (!crashing) updateEffects(realDt);
+    if (!crashing && !finishing) updateEffects(realDt);
     if (crashing) { game.crashT += realDt; if (game.crashT >= C.crashSec) gameOver(); }
+    if (finishing) { game.crashT += realDt; if (game.crashT >= C.finishSec) endRun('complete'); }
     updateHud();
     updateTailWarn();
     signs.update(game.sigma);
@@ -2951,7 +3206,7 @@ function update(realDt) {
     updatePlayer(realDt);
   }
   const speedFrac = Math.min(1.3, (game.mph * speedMult() - C.startSpeedMph) / (C.maxSpeedMph - C.startSpeedMph));
-  updateCamera(realDt, game.state === 'play' || game.state === 'crashing' ? speedFrac : 0);
+  updateCamera(realDt, game.state === 'play' || game.state === 'crashing' || game.state === 'finishing' ? speedFrac : 0);
   if (DEBUG) { updateDebugStrips(); updateDebug(miles); }
 }
 
@@ -2997,8 +3252,12 @@ window.__pedro = {
       })(),
       miles: game.sigma / Core.METERS_PER_MILE, score: game.score, seed: game.seed, liveHazards: live,
       rows: game.spawner ? game.spawner.rowCount : 0, roast: game.lastRoast || '',
-      nearMisses: game.nearMisses, milestoneHit: game.goal > 0, goal: game.goal, coins: game.coins, musicStyle: Sfx.style(),
-      hudLabel: ui.milesLabel.textContent,
+      nearMisses: game.nearMisses, coins: game.coins, musicStyle: Sfx.style(),
+      hudLabel: ui.milesLabel.textContent, hudMiles: ui.miles.textContent,
+      week: game.week, weekMiles: game.weekMiles, result: game.result, dropped: game.dropped, weekMax: progress.max, weekSel: progress.sel,
+      topMph: Core.topSpeedMph(), difficulty: Core.difficulty(game.sigma / Core.METERS_PER_MILE),
+      overTitle: ui.overTitle.textContent, overSub: ui.overSub.textContent, overCta: ui.overCta.textContent, help: helpOpen,
+      banner: ui.banner.classList.contains('hidden') ? '' : ui.banner.innerText.replace(/\s+/g, ' ').trim(),
       audio: Sfx.state(), muted: Sfx.muted, shareText: game.shareText || '',
       shield: game.shield, effect: game.effect, effectT: game.effectT, powerups: game.powerups, plowed: game.plowed };
   },
