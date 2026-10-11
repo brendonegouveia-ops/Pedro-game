@@ -855,17 +855,17 @@ await sharedBoardTest(true);
     return route.fulfill({ status: 201, headers: cors, body: '' });
   });
   const pm2 = await mctx.newPage();
-  await pm2.addInitScript(() => {
-    if (!localStorage.getItem('seeded')) {
-      localStorage.setItem('seeded', '1');
-      localStorage.setItem('pedro.board', JSON.stringify([
-        { name: 'Nick Super V6', score: 27093, miles: 8.67 }, { name: 'Nick Super V6', score: 23378, miles: 7.58 },
-        { name: 'Nick Super V6', score: 20414, miles: 7.02 }, { name: 'Nick Super V6', score: 20414, miles: 7.02 },
-      ]));
-    }
-  });
+  // Seed the saved scores from inside the page, then reload. (Writing localStorage from an init script on file://
+  // makes Chromium drop the page's own later writes on reload, e.g. the "already shared" flag this test checks.)
   const q = `?debug&seed=3&lbUrl=${encodeURIComponent(SB)}&lbKey=${KEY}`;
   await pm2.goto(pathToFileURL(path.join(root, 'index.html')).href + q);
+  await pm2.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  await pm2.evaluate(() => localStorage.setItem('pedro.board', JSON.stringify([
+    { name: 'Nick Super V6', score: 27093, miles: 8.67 }, { name: 'Nick Super V6', score: 23378, miles: 7.58 },
+    { name: 'Nick Super V6', score: 20414, miles: 7.02 }, { name: 'Nick Super V6', score: 20414, miles: 7.02 },
+  ])));
+  await sleep(1000);
+  await pm2.reload();
   await pm2.waitForFunction(() => window.__pedro && window.__pedro.ready);
   const prompted = await pm2.waitForSelector('#lbMigrate:not(.hidden)', { timeout: 8000 }).then(() => true, () => false);
   const ptxt = prompted ? await pm2.textContent('#lbMigrateText') : '';
