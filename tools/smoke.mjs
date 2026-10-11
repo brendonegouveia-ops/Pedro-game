@@ -287,7 +287,7 @@ if (!QUICK) await autopilot('snow', '?debug&seed=4244&week=4&start=7&copAt=off',
 });
 
 // A cop chase starts right away: the guaranteed lane gets the bot through it without being pulled over
-if (!QUICK) await autopilot('cop', '?debug&seed=4245&week=5&start=3&copAt=3.02', 40, (st) => {
+if (!QUICK) await autopilot('cop', '?debug&seed=4245&week=5&start=3&copAt=3.06', 40, (st) => {
   st.cop.chases >= 1 && st.hits === 0 ? ok(`cop chase on autopilot: ${st.cop.chases} chase(s), phase "${st.cop.phase}", never pulled over`) : fail('cop autopilot: ' + JSON.stringify(st.cop));
 });
 
