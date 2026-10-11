@@ -626,6 +626,7 @@ async function endRunQuickly(pg) {
   st = await pl.evaluate(() => window.__pedro.snapshot());
   const closed = await pl.isHidden('#boardScreen');
   closed && st.state === 'over' ? ok('Escape closes the board without restarting') : fail('board close: ' + JSON.stringify({ closed, s: st.state }));
+  await sleep(1000);     // let localStorage flush before reloading
   await pl.reload();
   await pl.waitForFunction(() => window.__pedro && window.__pedro.ready);
   await pl.click('#titleLbBtn');
@@ -758,11 +759,13 @@ await sharedBoardTest(true);
   posts.length === 1 && uploaded.length === 2 && uploaded.every((r) => r.name === 'Nick Super V6') && !uploaded.some((r) => r.score === 20414) && /27,093/.test(list) && /23,378/.test(list)
     ? ok(`uploaded 2 saved scores in one request, skipped the duplicate already on the board; board: "${list.slice(0, 90)}…"`)
     : fail('migration upload: ' + JSON.stringify({ posts, list }));
+  await sleep(1500);     // let Chromium flush localStorage before reloading (a reload right after a write can lose it under load)
   await pm2.reload();
   await pm2.waitForFunction(() => window.__pedro && window.__pedro.ready);
   await sleep(1500);
   const again = await pm2.isVisible('#boardScreen');
-  !again ? ok('never asks again after sharing') : fail('migration prompt reappeared');
+  !again ? ok('never asks again after sharing')
+    : fail('migration prompt reappeared; storage: ' + await pm2.evaluate(() => JSON.stringify({ shared: localStorage.getItem('pedro.boardShared'), board: (localStorage.getItem('pedro.board') || '').length })));
   await mctx.close();
 }
 
