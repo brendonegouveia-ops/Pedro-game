@@ -193,6 +193,54 @@ await page.keyboard.press('Enter'); await sleep(100);
 s = await snap();
 s.state === 'play' ? ok('any key resumes from pause') : fail('did not resume: ' + s.state);
 
+// --- Pause menu: Resume / Restart week / Main menu (buttons and R / Q keys) ---
+{
+  const pp = await context.newPage();
+  const errs = [];
+  pp.on('pageerror', (e) => errs.push(e.message));
+  const sn = () => pp.evaluate(() => window.__pedro.snapshot());
+  await pp.goto(pathToFileURL(path.join(root, 'index.html')).href + '?debug&seed=3&week=2');     // no &start: it applies to every run
+  await pp.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  await pp.keyboard.press('Enter');
+  await pp.waitForFunction(() => window.__pedro.snapshot().state === 'play');
+  await pp.evaluate(() => window.__pedro.grant(2));
+  const pauseNow = async () => { await pp.click('#pauseBtn'); await pp.waitForFunction(() => window.__pedro.snapshot().state === 'paused', null, { timeout: 5000 }).catch(() => {}); };
+  await pauseNow();
+  const btns = await pp.evaluate(() => [...document.querySelectorAll('#pauseScreen button')].map((b) => b.textContent.trim()));
+  await pp.screenshot({ path: path.join(outDir, '6b-pause-menu.png') });
+  // the week-start banner is still up: the menu must be on top of it (elementFromPoint at each button's center)
+  const onTop = await pp.evaluate(() => [...document.querySelectorAll('#pauseScreen button')].every((b) => { const r = b.getBoundingClientRect(); return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === b; }));
+  btns.join('|') === '▶ Resume|↻ Restart week|☰ Main menu' && onTop ? ok(`pause menu on top of everything: ${btns.join(' · ')}`) : fail('pause buttons: ' + JSON.stringify({ btns, onTop }));
+  await pp.click('#pauseResume');
+  let q = await sn();
+  q.state === 'play' && q.week === 2 ? ok('Resume button continues the drive') : fail('resume button: ' + q.state);
+  await pp.waitForFunction(() => window.__pedro.snapshot().miles > 0.06, null, { timeout: 30000 }).catch(() => {});
+  await pauseNow();
+  const milesBefore = (await sn()).miles;
+  await pp.click('#pauseRestart');
+  q = await sn();
+  const pauseHidden = await pp.isHidden('#pauseScreen');
+  q.state === 'play' && q.week === 2 && q.miles < 0.05 && q.miles < milesBefore && q.lives === 3 && pauseHidden
+    ? ok(`Restart week: fresh Week 2 run from 0.00 mi (was ${milesBefore.toFixed(2)} mi), 3 links`) : fail('restart: ' + JSON.stringify({ s: q.state, w: q.week, mi: q.miles, lives: q.lives, pauseHidden }));
+  await pauseNow();
+  await pp.click('#pauseMenu');
+  q = await sn();
+  const titleShown = await pp.isVisible('#titleScreen'), hudHidden = await pp.isHidden('#hud');
+  q.state === 'title' && titleShown && hudHidden && !q.music.paused ? ok('Main menu: back to the title screen, HUD gone') : fail('menu: ' + JSON.stringify({ s: q.state, titleShown, hudHidden }));
+  // keyboard: R restarts, Q goes to the menu
+  await pp.keyboard.press('Enter');
+  await pp.waitForFunction(() => window.__pedro.snapshot().state === 'play');
+  await sleep(400);
+  await pp.keyboard.press('p'); await pp.keyboard.press('r');
+  q = await sn();
+  const r = q.state === 'play' && q.miles < 0.05;
+  await pp.keyboard.press('p'); await pp.keyboard.press('q');
+  q = await sn();
+  r && q.state === 'title' ? ok('keys while paused: R restarts the week, Q goes to the main menu') : fail(`pause keys: restart ${r}, then ${q.state}`);
+  if (errs.length) fail('pause page errors: ' + errs.join(' | '));
+  await pp.close();
+}
+
 // --- Autopilot: follow the guaranteed-open lane via real key events, dodging as late as safely possible.
 // If the fairness invariant holds in real-time play, this bot never crashes.
 async function autopilot(label, query, seconds, expect) {

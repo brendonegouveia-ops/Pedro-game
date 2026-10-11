@@ -271,6 +271,10 @@
   #garageAction { background: linear-gradient(135deg, #ffd166, #ff9f43); color: #1a1030; }
   #garageAction:disabled { opacity: 0.45; }
   .gMsg { min-height: 16px; margin-top: 6px; font-size: 13px; font-weight: 800; color: #ffe1a8; text-align: center; }
+  /* Pause menu (above banners and speech bubbles) */
+  #pauseScreen { z-index: 35; background: radial-gradient(ellipse at center, rgba(8,10,20,0.6), rgba(8,10,20,0.85)); }
+  .pauseMenu { display: flex; flex-direction: column; gap: 10px; width: min(280px, 80vw); pointer-events: auto; }
+  .pauseMenu button { width: 100%; font-size: 17px; }
   /* Week picker (title) */
   .weekPick { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; pointer-events: auto; }
   .wkBtn {
@@ -361,7 +365,12 @@
 
 <div id="pauseScreen" class="layer screen hidden">
   <h1 class="title" style="font-size:44px">Paused</h1>
-  <div class="cta">Tap / press any key to resume</div>
+  <div class="pauseMenu">
+    <button class="shareBtn" id="pauseResume" type="button">▶ Resume</button>
+    <button class="lbBtn" id="pauseRestart" type="button">↻ Restart week</button>
+    <button class="lbBtn" id="pauseMenu" type="button">☰ Main menu</button>
+  </div>
+  <div class="hint">Tap anywhere else to resume<br>Keyboard: any key resume · R restart · Q main menu</div>
 </div>
 
 <div id="overScreen" class="layer screen hidden">
@@ -3074,6 +3083,7 @@ function pause() {
   game.prevState = game.state;
   game.state = 'paused';
   ui.pause.classList.remove('hidden');
+  ui.banner.classList.add('hidden'); hideSpeech();     // keep the pause menu clean
   Sfx.engine(0, 0);
   Sfx.setMusicPaused(true);
   Sfx.siren(false);
@@ -3087,6 +3097,13 @@ function resume() {
   if (game.cop.phase === 'warn' || game.cop.phase === 'chase') Sfx.siren(true);
   lastFrame = performance.now();
 }
+// Pause menu: restart this week from scratch, or leave the drive for the title screen
+function leavePause() { ui.pause.classList.add('hidden'); Sfx.setMusicPaused(false); lastFrame = performance.now(); }
+function restartFromPause() { if (game.state !== 'paused') return; Sfx.unlock(); leavePause(); startRun(); }
+function menuFromPause() { if (game.state !== 'paused') return; leavePause(); toTitle(); }
+document.getElementById('pauseResume').addEventListener('click', (e) => { e.stopPropagation(); resume(); });
+document.getElementById('pauseRestart').addEventListener('click', (e) => { e.stopPropagation(); restartFromPause(); });
+document.getElementById('pauseMenu').addEventListener('click', (e) => { e.stopPropagation(); menuFromPause(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) { pause(); Sfx.suspend(); } });
 window.addEventListener('blur', pause);
 
@@ -3166,7 +3183,12 @@ function onAnyStartInput(isKey, key) {
     if (isKey && progress.max > 1 && /^(ArrowLeft|ArrowRight|a|A|d|D)$/.test(key)) { selectWeek(progress.sel + (/^(ArrowRight|d|D)$/.test(key) ? 1 : -1)); return true; }
     startRun(); return true;
   }
-  if (game.state === 'paused') { resume(); return true; }
+  if (game.state === 'paused') {
+    if (isKey && (key === 'r' || key === 'R')) restartFromPause();
+    else if (isKey && (key === 'q' || key === 'Q')) menuFromPause();
+    else resume();
+    return true;
+  }
   if (game.state === 'over') {
     const a = document.activeElement;
     if (a && a.tagName === 'INPUT') { a.blur(); return true; }     // first tap just closes the keyboard

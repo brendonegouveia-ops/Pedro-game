@@ -19,6 +19,7 @@
 - **Tailgaters:** a rear-view mirror pops up at the top of the screen when they're coming. It has one column per lane with Pedro's car at the top, and each tailgater is a red dot sliding up its lane (several at once, side by side if they share a lane). If one is in your lane, that column flashes and a **MOVE!** tag appears.
 - **Music:** an original synthesized Portuguese *corridinho*-style accordion dance (2/4, parallel thirds, musette reeds, oom-pah bass, ferrinhos) that speeds up with the car. In each week's final two miles it builds and drops into dubstep (wobble bass, half-time drums).
 - **Phone:** swipe left/right, or tap the left/right half of the screen. Buttons bottom-right: pause, music, sound.
+- **Pause** (⏸ button, P or Esc): Resume, Restart week, or Main menu (keys: any key resumes, R restarts, Q main menu).
 - **Desktop:** ← → or A / D. P pauses, M mutes everything, N toggles music. After a drive, Space retries the week (or starts the next one if you made it).
 - The whole game is the single file `index.html` (Three.js `0.169.0` loads from jsdelivr). There's no build step. It runs from GitHub Pages or straight from disk (`file://`, needs internet for Three.js).
 
