@@ -270,7 +270,8 @@ if (!QUICK) await autopilot('start', '?debug&seed=4242', 30, (st) => {
   st.nearMisses > 0 ? ok(`near-miss bonus awarded (${st.nearMisses})`) : fail('no near misses recorded');
 });
 if (!QUICK) await autopilot('brutal', '?debug&seed=4243&week=6&start=5', 40, (st) => {
-  st.week === 6 && st.difficulty >= 0.999 && st.mph > 175 ? ok(`week 6 at full difficulty: ${st.mph.toFixed(0)} mph, ${st.weather}, road work active`) : fail(`brutal run: week ${st.week}, difficulty ${st.difficulty}, ${st.mph} mph`);
+  // baseMph: the road speed before power-ups (a Brake Check the bot drove through halves the displayed mph)
+  st.week === 6 && st.difficulty >= 0.999 && st.baseMph > 175 ? ok(`week 6 at full difficulty: ${st.baseMph.toFixed(0)} mph, ${st.weather}, road work active`) : fail(`brutal run: week ${st.week}, difficulty ${st.difficulty}, ${st.baseMph} mph`);
   const tw = st.firstTailWarn;
   if (!tw) { fail('no tailgater mirror seen in 40 s at full difficulty'); return; }
   const m = tw.first;
@@ -404,7 +405,7 @@ if (!QUICK) await autopilot('snow', '?debug&seed=4244&week=4&start=7', 40, (st) 
   let g = await sn();
   const lane = g.lane;
   await pw.evaluate((l) => window.__pedro.spawnClosure(l, 70, 160), lane);
-  await sleep(400);
+  await pw.waitForFunction(() => window.__pedro.snapshot().cones > 10 && window.__pedro.snapshot().speech, null, { timeout: 20000, polling: 50 }).catch(() => {});
   g = await sn();
   const roadLines = await pw.evaluate(() => ROADWORK_LINES);
   g.cones > 10 && roadLines.includes(g.speech) ? ok(`closure: ${g.cones} cones drawn, Pedro: "${g.speech}"`) : fail(`closure visuals: cones ${g.cones}, speech "${g.speech}"`);
@@ -456,10 +457,10 @@ if (!QUICK) await autopilot('snow', '?debug&seed=4244&week=4&start=7', 40, (st) 
   g3.lane === g2.lane && g3.slides === 1 ? ok('driving straight over black ice keeps the lane') : fail(`straight over ice: lane ${g2.lane} → ${g3.lane}, slides ${g3.slides}`);
 
   // Snowplow train: generated in snow weeks, solid (hitting one costs a link), Pedro reacts
-  await drive('?debug&seed=12&week=4&start=2');
+  await drive('?debug&seed=27&week=4&start=2');     // seed 27: the spawner opens with a plow train
   const plows = await pw.waitForFunction(() => window.__pedro.hazards().some((h) => h.type === 'plow' && h.ahead < 120), null, { timeout: 90000, polling: 100 }).then(() => true, () => false);
   if (plows) {
-    await sleep(500);
+    await pw.waitForFunction(() => PLOW_LINES.includes(window.__pedro.snapshot().speech), null, { timeout: 20000, polling: 50 }).catch(() => {});
     await pw.screenshot({ path: path.join(outDir, '26-snowplow-train.png') });
     const tr = await pw.evaluate(() => { const ps = window.__pedro.hazards().filter((h) => h.type === 'plow'); return { n: ps.length, lanes: [...new Set(ps.map((p) => p.lane))].sort() }; });
     g = await sn();

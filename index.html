@@ -3715,7 +3715,7 @@ window.__pedro = {
       weather: game.weather, fogFar: scene.fog.far, rainOn: rain.m.visible, snowOn: snow.m.visible, slides: game.slides, sliding: !!player.sliding,
       cones: coneMesh.count, closures: game.spawner ? game.spawner.hazards.filter((x) => x.active && x.type === Core.T.CLOSURE).length : 0,
       week: game.week, weekMiles: game.weekMiles, result: game.result, dropped: game.dropped, weekMax: progress.max, weekSel: progress.sel,
-      topMph: Core.topSpeedMph(), difficulty: Core.difficulty(game.sigma / Core.METERS_PER_MILE),
+      topMph: Core.topSpeedMph(), baseMph: game.mph, difficulty: Core.difficulty(game.sigma / Core.METERS_PER_MILE),
       overTitle: ui.overTitle.textContent, overSub: ui.overSub.textContent, overCta: ui.overCta.textContent, help: helpOpen,
       banner: ui.banner.classList.contains('hidden') ? '' : ui.banner.innerText.replace(/\s+/g, ' ').trim(),
       audio: Sfx.state(), muted: Sfx.muted, shareText: game.shareText || '',
