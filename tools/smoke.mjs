@@ -310,7 +310,7 @@ if (!QUICK) await autopilot('finish', '?debug&seed=777&start=9.8', 25, async (st
   await sleep(700);
   await p2.keyboard.press(' ');
   await p2.waitForFunction(() => window.__pedro.snapshot().state === 'play', null, { timeout: 5000 }).catch(() => {});
-  await sleep(300);
+  await p2.waitForFunction(() => window.__pedro.snapshot().hudLabel === 'WEEK 2 · TO GAME NIGHT', null, { timeout: 10000, polling: 50 }).catch(() => {});   // next rendered frame
   const n = await p2.evaluate(() => window.__pedro.snapshot());
   n.state === 'play' && n.week === 2 && n.weekMiles === 12 && n.hudLabel === 'WEEK 2 · TO GAME NIGHT' && n.lives === 3 && n.topMph === 168 && n.musicStyle === 'folk'
     ? ok(`Space starts Week 2: 12 mi, top speed ${n.topMph} mph, start difficulty ${n.difficulty.toFixed(2)}, HUD "${n.hudLabel}" ${n.hudMiles}, folk again`)
@@ -844,7 +844,7 @@ if (!QUICK) await autopilot('cop', '?debug&seed=4245&week=5&start=3&copAt=3.06',
   // Donut: speed boost
   a = await sn();
   await p3.evaluate(() => window.__pedro.grant(3));
-  await sleep(300);
+  await p3.waitForFunction(() => /DONUT RUSH/.test(window.__pedro.hudText()), null, { timeout: 10000, polling: 50 }).catch(() => {});   // next rendered frame
   b = await sn();
   const ratio = b.mph / a.mph;
   b.effect === 3 && /DONUT RUSH/.test(await hud()) && ratio > 1.25 && ratio < 1.36
