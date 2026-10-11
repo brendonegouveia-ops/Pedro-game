@@ -231,6 +231,18 @@
   .board .errDetail { font-size: 11px; opacity: 0.6; padding-top: 0; font-family: ui-monospace, Menlo, monospace; word-break: break-word; }
   .board .empty { opacity: 0.7; padding: 16px 0; display: block; text-align: center; }
 
+  /* Cop chase: red/blue flashes from the bottom corners, police marker in the mirror */
+  #copFx { opacity: 0; transition: opacity 0.3s; }
+  #copFx.on { opacity: 1; animation: copFlash 0.5s steps(1) infinite; }
+  @keyframes copFlash {
+    0% { background: radial-gradient(ellipse at 0% 100%, rgba(255,30,40,0.5), transparent 55%); }
+    50% { background: radial-gradient(ellipse at 100% 100%, rgba(40,90,255,0.5), transparent 55%); }
+  }
+  #mirror .mcop { position: absolute; left: 0; bottom: 3px; width: 16px; height: 12px; border-radius: 4px; display: none;
+    border: 2px solid #fff; box-sizing: border-box; animation: mcop 0.5s steps(1) infinite; }
+  #mirror.cop .mcop { display: block; }
+  #mirror.cop .mlabel { background: #1d4fd6; }
+  @keyframes mcop { 0% { background: #ff2030; box-shadow: 0 0 10px #ff2030; } 50% { background: #2a6bff; box-shadow: 0 0 10px #2a6bff; } }
   /* Week picker (title) */
   .weekPick { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; pointer-events: auto; }
   .wkBtn {
@@ -283,15 +295,17 @@
     <div class="pill" id="hudSpeed"><small>MPH</small><span id="hudSpeedVal">70</span></div>
   </div>
   <div id="mirror" class="hidden" aria-label="Tailgaters behind you">
-    <div class="mlabel">⚠ TAILGATERS<span id="mirrorCount"></span><em>MOVE!</em></div>
+    <div class="mlabel"><span id="mirrorTxt">⚠ TAILGATERS</span><span id="mirrorCount"></span><em>MOVE!</em></div>
     <div class="mglass">
       <i class="mlane"></i><i class="mlane"></i><i class="mlane"></i><i class="mlane"></i>
       <i class="mpedro"></i>
       <i class="mdot"></i><i class="mdot"></i><i class="mdot"></i><i class="mdot"></i><i class="mdot"></i><i class="mdot"></i>
+      <i class="mcop"></i>
     </div>
   </div>
   <div id="hudPower">
     <div class="power hidden" id="hudShield" style="--pc:#3aa0ff"><span class="dot">🛡</span>FULL COVERAGE</div>
+    <div class="power hidden" id="hudCop" style="--pc:#3a7bff"><span class="dot">🚨</span><span id="hudCopTxt">OUTRUN THE COP</span><span class="bar"><i id="hudCopBar"></i></span></div>
     <div class="power hidden" id="hudEffect" style="--pc:#ffd166"><span class="dot" id="hudEffectIcon"></span><span id="hudEffectName"></span><span class="bar"><i id="hudEffectBar"></i></span></div>
   </div>
 </div>
@@ -300,6 +314,7 @@
 <div id="hitFx" class="layer"></div>
 <div id="slowmoFx" class="layer hidden"></div>
 <div id="invulnFx" class="layer hidden"></div>
+<div id="copFx" class="layer"></div>
 
 <div id="titleScreen" class="layer screen">
   <h1 class="title">Pedro Makes It <span>to Game Night</span></h1>
@@ -373,6 +388,8 @@
     <p>🪙 Grab coins for points, and a whole trail for a bonus. Trails often run right at a car, so swerve out at the last second. When the <b>mirror</b> pops up at the top, tailgaters are coming from behind: a red dot in your lane means move.</p>
     <h3>Road work &amp; weather</h3>
     <p>From Week 2, <b>road work</b> closes a lane for a stretch: an arrow board shows which way to merge, and cones line the closed lane. Week 3 is <b>rain</b>, so you see traffic later. From Week 4 it's <b>snow</b> (and later weeks rotate rain and snow): <b>snowplow trains</b> block 2–3 lanes, and steering onto <b>black ice</b> (the shiny blue patches) slides you one extra lane. Driving straight over ice is fine.</p>
+    <h3>Cops</h3>
+    <p>From Week 3, a <b>cop</b> chases you now and then: siren, flashing lights, and a 🚨 in the mirror. Hit <b>anything</b> while the timer runs and you get <b>pulled over</b>. That ends the drive, and Full Coverage won't save you (Fresh Detail will). Outlast the timer to lose them for a bonus. Points are worth ×1.5 during a chase.</p>
     <h3>Power-ups</h3>
     <ul>
       <li><i style="--pc:#3aa0ff">🛡</i><span><b>Full Coverage:</b> absorbs one crash.</span></li>
@@ -466,6 +483,19 @@ const CONFIG = {
   iceChance: [0.12, 0.22],      // chance per row of a black-ice patch (middle lanes only)
   iceMeters: [14, 24],          // patch length
   iceSlideMs: 260,              // steering onto ice slides Pedro one more lane, this slowly
+
+  // --- Cop chases (from copMinWeek). Siren + mirror warning for copWarnSec, then a timed chase:
+  //     hit ANYTHING while it lasts and Pedro gets pulled over (run over). Fresh Detail still protects;
+  //     Full Coverage doesn't. Outlast the timer and he loses them for a bonus. Traffic is unchanged.
+  copMinWeek: 3,
+  copMaxChases: 3,              // chases per week: 1, +1 every copMoreEveryWeeks weeks, up to this
+  copMoreEveryWeeks: 2,
+  copChaseSec: [15, 25],        // chase length (game seconds), week 3 → week 11+
+  copWarnSec: 2,                // siren and mirror before the chase rule kicks in
+  copWindow: [0.2, 0.8],        // chases start inside this fraction of the week
+  copEscapeBonus: [1500, 500],  // losing the cop pays copEscapeBonus[0] + copEscapeBonus[1] × (week − copMinWeek)
+  copScoreMult: 1.5,            // points multiplier while the cop is chasing
+  copPullSec: 1.8,              // real seconds of pulling over before the screen
 
   // --- Camera ---
   fovBase: 62,
@@ -688,6 +718,36 @@ const ICE_LINES = [
   "Ice ice baby. NOT like this",
   "I meant to do that",
 ];
+// A cop starts chasing:
+const COP_START_LINES = [
+  "Bro it's the cops 😭",
+  "Act natural. ACT NATURAL.",
+  "Officer, I'm late for game night",
+  "Not the red and blue 💀",
+  "I'm not stopping. It's game night.",
+];
+// Losing the cop:
+const COP_ESCAPE_LINES = [
+  "Lost him. Too easy.",
+  "Fast & Furious: Fall River Drift",
+  "He couldn't keep up with the Jetta 😤",
+  "And THAT'S why you don't chase Pedro",
+];
+// Getting pulled over:
+const COP_PULL_LINES = [
+  "Officer, I can explain",
+  "Is this about the Jetta?",
+  "I was going the speed of game night",
+];
+// Pulled-over screen ({miles}, {score}, {left}, {week} are filled in):
+const COP_ROASTS = [
+  "License and registration, Pedro.",
+  "Ticket: $400. Game night: missed.",
+  "Pedro tried 'do you know who I am'. Nobody did.",
+  "The officer was also on his way to game night. Awkward.",
+  "Bro got pulled over in a Jetta. Generational.",
+  "{miles} miles of freedom. Now it's traffic school.",
+];
 // What's on the table each week (cycles). Shown on the title screen, HUD and week-complete screen.
 const GAME_NIGHTS = [
   "Catan night",
@@ -762,6 +822,12 @@ const PedroCore = (() => {
   function closureStartFrac(w) {
     return Math.max(CONFIG.closureStartFracMin, CONFIG.closureStartFrac - CONFIG.closureStartFracStep * (w - CONFIG.closureMinWeek));
   }
+  // Cop chases per week, and how long each lasts (game seconds)
+  function copChases(w) {
+    if (w < CONFIG.copMinWeek) return 0;
+    return Math.min(CONFIG.copMaxChases, 1 + Math.floor((w - CONFIG.copMinWeek) / CONFIG.copMoreEveryWeeks));
+  }
+  function copChaseSec(w) { return lerp(CONFIG.copChaseSec[0], CONFIG.copChaseSec[1], clamp01((w - CONFIG.copMinWeek) / 8)); }
   function week() { return weekNo; }
   function weather() { return weatherOf(weekNo); }
   function weekOffset() { return weekOffsetMiles; }
@@ -1173,7 +1239,7 @@ const PedroCore = (() => {
   }
 
   return { METERS_PER_MILE, MPH_TO_MPS, mulberry32, lerp, clamp01, difficulty, speedMph, speedAt, laneX,
-    setWeek, week, weekOffset, weekMiles, weekStartDifficulty, weekTopSpeedMph, topSpeedMph, weatherOf, weather, closureStartFrac,
+    setWeek, week, weekOffset, weekMiles, weekStartDifficulty, weekTopSpeedMph, topSpeedMph, weatherOf, weather, closureStartFrac, copChases, copChaseSec,
     T, TYPE_NAMES, typeK, typeSize, halfSpan, iceHalfSpan, laneChangeSec, ghostConflict, createSpawner };
 })();
 if (typeof window !== 'undefined') window.PedroCore = PedroCore;
@@ -1796,6 +1862,29 @@ pools.plow = makePool(6, () => {
   it.update = (h) => { it.beacon.visible = (game.time * 4 + h.id) % 2 < 1; };
   return it;
 });
+// Police car: black-and-white sedan with a red/blue light bar; big glow halos + a light pool on the road
+// so the flashing reads even when the car itself sits just below the bottom of the screen.
+const copCar = (() => {
+  const p = buildSedanParts();
+  p[1] = part(extrudeProfile(SEDAN_BODY, 1.84), 0x15171c);                            // black body
+  p.push(part(box(1.88, 0.4, 2.3), 0xf2f2f2, 0, 0.62, 0.15));                          // white doors
+  p.push(part(box(1.2, 0.12, 0.36), 0x111111, 0, 1.56, 0.1));                          // light bar base
+  const group = new THREE.Group();
+  group.add(new THREE.Mesh(merge(p), vcMat), new THREE.Mesh(sedanLightsGeo, glowMat));
+  const red = new THREE.Mesh(box(0.5, 0.14, 0.32), new THREE.MeshBasicMaterial({ color: 0xff1a2a, fog: false }));
+  const blue = new THREE.Mesh(box(0.5, 0.14, 0.32), new THREE.MeshBasicMaterial({ color: 0x2a6bff, fog: false }));
+  red.position.set(-0.32, 1.68, 0.1); blue.position.set(0.32, 1.68, 0.1);
+  const halo = (c) => new THREE.Mesh(new THREE.PlaneGeometry(4.5, 4.5), new THREE.MeshBasicMaterial({ map: makeGlowTexture(), color: c, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+  const haloR = halo(0xff2030), haloB = halo(0x2a6bff);
+  haloR.position.set(-0.6, 1.9, 0); haloB.position.set(0.6, 1.9, 0);
+  const pool = new THREE.Mesh(new THREE.PlaneGeometry(7, 9).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: makeGlowTexture(), color: 0xff2030, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
+  pool.position.set(0, 0.03, -2.5);
+  group.add(red, blue, haloR, haloB, pool);
+  group.visible = false;
+  scene.add(group);
+  return { group, red, blue, haloR, haloB, pool, x: 0, z: 40 };
+})();
+
 // Road closure: arrow board trailer at the near end (faces Pedro) + an orange diamond sign on the shoulder 60 m earlier.
 // The cones and barrels along the closed lane are instanced (see updateHazards).
 function buildArrowBoard() {
@@ -2131,7 +2220,7 @@ const MUSIC = {
 };
 
 const Sfx = (() => {
-  let ctx = null, master = null, eng = null, noise = null;
+  let ctx = null, master = null, eng = null, noise = null, sirenV = null;
   let muted = store.get('pedro.muted', '0') === '1';
   let musicOn = store.get('pedro.music', '1') === '1';
   let musicGain = null, musicTimer = 0, step = 0, nextTime = 0, rate = 1, notes = 0, paused = false;
@@ -2427,6 +2516,25 @@ const Sfx = (() => {
       noiseHit(t + 0.25, 0.25, 'bandpass', 1800, 900, 0.2);
     },
     thud() { if (!live()) return; const t = ctx.currentTime; tone(t, 'sine', 140, 50, 0.22, 0.7); noiseHit(t, 0.18, 'lowpass', 1500, 300, 0.4); },
+    // Police siren (two-tone wail) until turned off
+    siren(on) {
+      if (!ctx) return;
+      const t = ctx.currentTime;
+      if (on && !sirenV) {
+        const o = ctx.createOscillator(); o.type = 'square'; o.frequency.value = 900;
+        const lfo = ctx.createOscillator(); lfo.type = 'triangle'; lfo.frequency.value = 0.7;
+        const lg = ctx.createGain(); lg.gain.value = 260; lfo.connect(lg); lg.connect(o.frequency);
+        const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 1100; f.Q.value = 0.9;
+        const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.07, t + 0.6);
+        o.connect(f); f.connect(g); g.connect(master); o.start(t); lfo.start(t);
+        sirenV = { o, lfo, g };
+      } else if (!on && sirenV) {
+        const v = sirenV; sirenV = null;
+        v.g.gain.cancelScheduledValues(t); v.g.gain.setValueAtTime(v.g.gain.value, t); v.g.gain.linearRampToValueAtTime(0, t + 0.4);
+        v.o.stop(t + 0.45); v.lfo.stop(t + 0.45);
+      }
+    },
+    sirenOn() { return !!sirenV; },
     skid() { if (!live()) return; const t = ctx.currentTime; noiseHit(t, 0.6, 'bandpass', 3200, 1100, 0.5); tone(t, 'sawtooth', 620, 380, 0.45, 0.04); },
     chime() {
       if (!live()) return;
@@ -2597,6 +2705,8 @@ const game = {
   nearMisses: 0,
   week: 1, weekMiles: C.weekBaseMiles, goalSigma: 0, dropped: false, weather: 'clear',
   slides: 0, saidRoadwork: false, saidPlow: false,
+  // cop chase: plan = start distances (m); phase off | warn | chase | leave | pull
+  cop: { plan: [], next: 0, phase: 'off', t: 0, dur: 0, escapes: 0, chases: 0 },
   result: '',            // 'wrecked' | 'complete' once the run is over
   coins: 0, trail: 0, trailGot: 0,
   shield: false,
@@ -2622,12 +2732,14 @@ function resetRun() {
   game.weather = Core.weather();
   setWeather(game.weather);
   game.slides = 0; game.saidRoadwork = false; game.saidPlow = false;
+  resetCop();
   game.goalSigma = game.weekMiles * Core.METERS_PER_MILE;
   const start = Math.min(START_SIGMA, game.goalSigma - 100);    // ?debug&start=N stays inside the week
   game.spawner = Core.createSpawner(game.seed, C.startLane, start, game.goalSigma);
   game.sigma = start; game.time = 0; game.score = 0; game.crashT = 0; game.spin = 0; game.slide = 0;
   game.nearMisses = 0; game.laneLeftAt.fill(-99);
   game.coins = 0; game.trail = 0; game.trailGot = 0;
+  { const cp = game.cop; cp.plan = planCopChases(); while (cp.next < cp.plan.length && cp.plan[cp.next] <= start + 50) cp.next++; }
   // ?debug&start=N past the drop point starts in dubstep (no build)
   game.dropped = start >= game.goalSigma - C.weekDropMiles * Core.METERS_PER_MILE;
   game.result = '';
@@ -2689,9 +2801,11 @@ function endRun(result) {
   if (isBest) { bestScore = score; store.set('pedro.best', bestScore); }
   const fill = (t) => t.replace(/\{miles\}/g, miles.toFixed(2)).replace(/\{score\}/g, score.toLocaleString())
     .replace(/\{left\}/g, left.toFixed(2)).replace(/\{week\}/g, game.week);
-  const line = won ? game.winLine : fill(ROASTS[Math.floor(Math.random() * ROASTS.length)]);
+  const pulled = result === 'pulled';
+  const line = won ? game.winLine : fill((pulled ? COP_ROASTS : ROASTS)[Math.floor(Math.random() * (pulled ? COP_ROASTS : ROASTS).length)]);
+  Sfx.siren(false); ui.copFx.classList.remove('on'); ui.hudCop.classList.add('hidden');
   ui.over.classList.toggle('win', won);
-  ui.overTitle.textContent = won ? 'Week ' + game.week + ' complete!' : 'Wrecked';
+  ui.overTitle.textContent = won ? 'Week ' + game.week + ' complete!' : pulled ? 'Pulled over' : 'Wrecked';
   ui.overSub.textContent = won ? 'Made it to ' + gameNight(game.week) + " at Carlson's" : 'Week ' + game.week + ' · ' + left.toFixed(2) + ' mi short of game night';
   ui.overRoast.textContent = line;
   ui.overScore.textContent = score.toLocaleString();
@@ -2718,7 +2832,7 @@ function endRun(result) {
   ui.lbMsg.textContent = Board.shared ? 'Add your score to the leaderboard?' : "Add your score to this phone's leaderboard?";
   game.shareText = (won
     ? 'Pedro made it to game night! Week ' + game.week + ' (' + game.weekMiles + ' mi) done'
-    : 'Pedro wrecked ' + miles.toFixed(2) + ' miles into Week ' + game.week + ', ' + left.toFixed(2) + ' mi short of game night') +
+    : 'Pedro ' + (pulled ? 'got pulled over ' : 'wrecked ') + miles.toFixed(2) + ' miles into Week ' + game.week + ', ' + left.toFixed(2) + ' mi short of game night') +
     '. Score: ' + score.toLocaleString() + '. Beat that: ' + C.shareUrl;
 }
 
@@ -2729,6 +2843,7 @@ function pause() {
   ui.pause.classList.remove('hidden');
   Sfx.engine(0, 0);
   Sfx.setMusicPaused(true);
+  Sfx.siren(false);
 }
 function resume() {
   if (game.state !== 'paused') return;
@@ -2736,6 +2851,7 @@ function resume() {
   game.state = game.prevState;
   ui.pause.classList.add('hidden');
   Sfx.setMusicPaused(false);
+  if (game.cop.phase === 'warn' || game.cop.phase === 'chase') Sfx.siren(true);
   lastFrame = performance.now();
 }
 document.addEventListener('visibilitychange', () => { if (document.hidden) { pause(); Sfx.suspend(); } });
@@ -2761,6 +2877,7 @@ const ui = {
   overSub: $('overSub'), overBonus: $('overBonus'), overCta: $('overCta'),
   weekName: $('weekName'), weekSub: $('weekSub'), weekNight: $('weekNight'), weekPrev: $('weekPrev'), weekNext: $('weekNext'),
   help: $('helpScreen'),
+  copFx: $('copFx'), hudCop: $('hudCop'), hudCopTxt: $('hudCopTxt'), hudCopBar: $('hudCopBar'), mirrorTxt: $('mirrorTxt'), mirrorCop: document.querySelector('#mirror .mcop'),
 };
 ui.titleBest.textContent = 'Best: ' + bestScore.toLocaleString();
 if (DEBUG) ui.debug.classList.remove('hidden');
@@ -2827,7 +2944,7 @@ function onAnyStartInput(isKey, key) {
     }
     return true;
   }
-  if (game.state === 'crashing' || game.state === 'finishing') return true;
+  if (game.state === 'crashing' || game.state === 'finishing' || game.state === 'pulled') return true;
   return false;
 }
 window.addEventListener('keydown', (e) => {
@@ -3183,6 +3300,7 @@ function toTitle() {
   game.state = 'title';
   ui.over.classList.add('hidden'); ui.hud.classList.add('hidden'); ui.lives.classList.add('hidden'); ui.pauseBtn.classList.add('hidden');
   resetMirror();
+  resetCop();
   setDamage(0);
   player.group.rotation.set(0, 0, 0); player.lane = C.startLane; player.x = player.fromX = laneX(C.startLane); player.t = 1;
   game.mph = C.startSpeedMph;
@@ -3332,6 +3450,8 @@ function bounceAside(h, hx) {
   h.spin = side * (heavy ? 0.8 : 3 + Math.random() * 3);
 }
 function onHit(h, hx) {
+  // During a cop chase any hit is a pull-over (Full Coverage doesn't help; Fresh Detail / hit-grace still do)
+  if (copChasing() && game.effect !== POWER.DETAIL && game.invulnT <= 0) { pullOver(h, hx); return; }
   if (h.type === T.CLOSURE) {
     // a closed lane is a wall: Fresh Detail / grace drive through the cones, otherwise it costs a link
     if (game.effect === POWER.DETAIL || game.invulnT > 0) return;
@@ -3457,7 +3577,7 @@ function updateEffects(realDt) {
 }
 
 // ---------- Scoring events ----------
-function scoreMultiplier() { return 1; }
+function scoreMultiplier() { return copChasing() ? C.copScoreMult : 1; }
 const _proj = new THREE.Vector3();
 let floaterIdx = 0;
 function floatText(text, color) {
@@ -3489,13 +3609,112 @@ for (let i = 0; i < 36; i++) {
   ui.confetti.appendChild(c);
 }
 let bannerTimer = 0;
-function showBanner(b1, b2, sub) {
+function showBanner(b1, b2, sub, sec) {
   ui.bannerB1.textContent = b1;
   ui.bannerB2.textContent = b2;
   ui.bannerSub.textContent = sub;
   ui.banner.classList.remove('hidden');
   clearTimeout(bannerTimer);
-  bannerTimer = setTimeout(() => { ui.banner.classList.add('hidden'); ui.confetti.classList.remove('go'); }, C.bannerSec * 1000);
+  bannerTimer = setTimeout(() => { ui.banner.classList.add('hidden'); ui.confetti.classList.remove('go'); }, (sec || C.bannerSec) * 1000);
+}
+
+// ---------- Cop chases ----------
+// Start distances for this week's chases (seeded, so ?seed replays them). ?debug&copAt=N puts one at mile N; copAt=off none.
+function planCopChases() {
+  const plan = [], MPM = Core.METERS_PER_MILE;
+  const q = DEBUG ? new URLSearchParams(location.search).get('copAt') : null;
+  if (q !== null) { const m = parseFloat(q); if (Number.isFinite(m)) plan.push(m * MPM); return plan; }
+  const n = Core.copChases(game.week), r = Core.mulberry32(game.seed ^ 0xC0B5), [a, b] = C.copWindow;
+  for (let i = 0; i < n; i++) plan.push((a + (b - a) * (i + 0.2 + 0.6 * r()) / n) * game.weekMiles * MPM);
+  return plan;
+}
+function copChasing() { return game.cop.phase === 'chase'; }
+function resetCop() {
+  const cp = game.cop;
+  cp.plan = []; cp.next = 0; cp.phase = 'off'; cp.t = 0; cp.dur = 0; cp.escapes = 0; cp.chases = 0;
+  copCar.group.visible = false; copCar.z = 40;
+  Sfx.siren(false);
+  ui.copFx.classList.remove('on'); ui.hudCop.classList.add('hidden');
+  hudCache.cop = -2;
+}
+function startChase(dur) {
+  const cp = game.cop;
+  cp.phase = 'warn'; cp.t = 0; cp.dur = dur; cp.chases++;
+  copCar.x = player.x; copCar.z = 40; copCar.group.visible = true;
+  Sfx.siren(true);
+  ui.copFx.classList.add('on');
+  showBanner('🚨 Cop on your tail', "Don't hit anything", "Hit anything and you're pulled over. Fresh Detail still saves you.", 2.6);
+  say(pickLine(COP_START_LINES, 'cop'), true);
+}
+function endChase(escaped) {
+  const cp = game.cop;
+  cp.phase = 'leave'; cp.t = 0;
+  Sfx.siren(false);
+  ui.copFx.classList.remove('on'); ui.hudCop.classList.add('hidden');
+  if (!escaped) return;
+  cp.escapes++;
+  const bonus = C.copEscapeBonus[0] + C.copEscapeBonus[1] * Math.max(0, game.week - C.copMinWeek);
+  game.score += bonus;
+  floatText('LOST HIM! +' + bonus.toLocaleString(), '#8fb4ff');
+  say(pickLine(COP_ESCAPE_LINES, 'escape'), true);
+  if (window.__pedroAudio) window.__pedroAudio.fanfare();
+}
+// Hit something while the cop is chasing: pulled over, drive over.
+function pullOver(h, hx) {
+  game.state = 'pulled';
+  game.crashT = 0;
+  game.hits++;
+  h.hit = true;
+  if (h.type !== T.CLOSURE) bounceAside(h, hx);
+  game.cop.phase = 'pull';
+  player.queued = 0; player.sliding = false; player.iceHit = false;
+  game.effect = -1; game.effectT = 0;
+  ui.hudCop.classList.add('hidden');
+  ui.pauseBtn.classList.add('hidden');
+  ui.hitFx.classList.remove('go'); void ui.hitFx.offsetWidth; ui.hitFx.classList.add('go');
+  say(pickLine(COP_PULL_LINES, 'pull'), true);
+  Sfx.thud();
+}
+const COP_BEHIND = 6.3;
+function updateCop(dtGame, realDt) {
+  const cp = game.cop;
+  if (game.state === 'play') {
+    if (cp.phase === 'off' && cp.next < cp.plan.length && game.sigma >= cp.plan[cp.next] && game.invulnT <= 0 && game.sigma < game.goalSigma - 300) {
+      cp.next++;
+      startChase(Core.copChaseSec(game.week));
+    } else if (cp.phase === 'warn') {
+      cp.t += dtGame;
+      if (cp.t >= C.copWarnSec) { cp.phase = 'chase'; cp.t = 0; }
+    } else if (cp.phase === 'chase') {
+      cp.t += dtGame;
+      if (cp.t >= cp.dur) endChase(true);
+    }
+  } else if (game.state === 'finishing' && (cp.phase === 'warn' || cp.phase === 'chase')) endChase(false);
+  // HUD timer
+  const hc = cp.phase === 'chase' ? Math.ceil((1 - cp.t / cp.dur) * 100) : cp.phase === 'warn' ? 101 : -1;
+  if (hc !== hudCache.cop) {
+    if ((hc >= 0) !== (hudCache.cop >= 0)) ui.hudCop.classList.toggle('hidden', hc < 0);
+    if (hc === 101) { ui.hudCopTxt.textContent = 'COP INCOMING'; ui.hudCopBar.style.transform = 'scaleX(1)'; }
+    else if (hc >= 0) { if (hudCache.cop === 101 || hudCache.cop < 0) ui.hudCopTxt.textContent = 'OUTRUN THE COP ×' + C.copScoreMult; ui.hudCopBar.style.transform = 'scaleX(' + (hc / 100) + ')'; }
+    hudCache.cop = hc;
+  }
+  // The car: closes in from behind, tails Pedro's lane with a lag, drops back when lost, pulls alongside when he's caught
+  if (cp.phase === 'off') return;
+  const g = copCar.group;
+  let tx = player.x, tz = COP_BEHIND;
+  if (cp.phase === 'warn') tz = lerp(40, COP_BEHIND, Math.min(1, cp.t / C.copWarnSec));
+  else if (cp.phase === 'chase') tz = COP_BEHIND + Math.sin(game.time * 2.1) * 0.4;
+  else if (cp.phase === 'leave') { tz = copCar.z + 22 * realDt; if (tz > 40) { cp.phase = 'off'; g.visible = false; return; } }
+  else if (cp.phase === 'pull') { tx = laneX(player.lane > 0 ? player.lane - 1 : player.lane + 1); tz = -0.8; }   // pulls up alongside
+  const k = Math.min(1, realDt * (cp.phase === 'pull' ? 2 : 3));
+  copCar.x += (tx - copCar.x) * k;
+  copCar.z = cp.phase === 'leave' ? tz : copCar.z + (tz - copCar.z) * Math.min(1, realDt * 2.5);
+  g.position.set(copCar.x, 0, copCar.z);
+  const redOn = Math.floor(game.time * 6 + performance.now() / 160) % 2 === 0;
+  copCar.red.visible = copCar.haloR.visible = redOn;
+  copCar.blue.visible = copCar.haloB.visible = !redOn;
+  copCar.pool.material.color.setHex(redOn ? 0xff2030 : 0x2a6bff);
+  copCar.haloR.quaternion.copy(camera.quaternion); copCar.haloB.quaternion.copy(camera.quaternion);
 }
 // Last stretch of the week: Carlson turns the music up (build → dubstep drop).
 function dropMusic() {
@@ -3523,20 +3742,28 @@ function finishWeek() {
 // Rear-view mirror: one column per lane, Pedro at the top of his lane, each tailgater a red dot
 // that slides up as it closes in (several can show at once, stacking in the same lane).
 const MIRROR_W = 176 - 6, MIRROR_LANE = MIRROR_W / 4;
-const mirrorCache = { shown: false, count: -1, hot: 0, mine: -1, danger: false, dots: new Int16Array(12).fill(-999), pedro: -1 };
+const mirrorCache = { shown: false, count: -1, hot: 0, mine: -1, danger: false, dots: new Int16Array(12).fill(-999), pedro: -1, cop: false, copLane: -1 };
 function resetMirror() {
   game.tgCount = 0;
   const mc = mirrorCache;
-  mc.shown = false; mc.count = 0; mc.hot = -1; mc.mine = -1; mc.danger = false; mc.pedro = -1; mc.dots.fill(-999);
-  ui.mirror.classList.add('hidden'); ui.mirror.classList.remove('danger');
+  mc.shown = false; mc.count = 0; mc.hot = -1; mc.mine = -1; mc.danger = false; mc.pedro = -1; mc.dots.fill(-999); mc.cop = false; mc.copLane = -1;
+  ui.mirror.classList.add('hidden'); ui.mirror.classList.remove('danger', 'cop');
+  ui.mirrorTxt.textContent = '⚠ TAILGATERS';
   ui.mirrorCount.textContent = '';
   for (const d of ui.mirrorDots) d.style.display = 'none';
 }
 function updateTailWarn() {
   const n = game.state === 'play' ? game.tgCount : 0;
   const mc = mirrorCache;
+  // a chasing cop shows in the mirror too (blue label, flashing marker in his lane)
+  const cop = game.state === 'play' && (game.cop.phase === 'warn' || game.cop.phase === 'chase');
+  if (cop !== mc.cop) { mc.cop = cop; ui.mirror.classList.toggle('cop', cop); ui.mirrorTxt.textContent = cop ? '🚨 POLICE' : '⚠ TAILGATERS'; }
+  if (cop) {
+    const cl = Math.max(0, Math.min(C.lanes - 1, Math.round((copCar.x - laneX(0)) / C.laneWidth)));
+    if (cl !== mc.copLane) { mc.copLane = cl; ui.mirrorCop.style.left = Math.round(cl * MIRROR_LANE + MIRROR_LANE / 2 - 8) + 'px'; }
+  }
   if (n > mc.count && mc.count >= 0 && n > 0) Sfx.horn();          // a new tailgater entered range
-  if ((n > 0) !== mc.shown) { mc.shown = n > 0; ui.mirror.classList.toggle('hidden', !mc.shown); }
+  if ((n > 0 || cop) !== mc.shown) { mc.shown = n > 0 || cop; ui.mirror.classList.toggle('hidden', !mc.shown); }
   if (n !== mc.count) { mc.count = n; ui.mirrorCount.textContent = n > 1 ? ' ×' + n : ''; }
   if (!mc.shown) return;
   let hot = 0, danger = false;
@@ -3614,13 +3841,14 @@ function frame(now) {
 function update(realDt) {
   if (game.state === 'paused') return;
   const miles = game.sigma / Core.METERS_PER_MILE;
-  if (game.state === 'play' || game.state === 'crashing' || game.state === 'finishing') {
-    const crashing = game.state === 'crashing', finishing = game.state === 'finishing';
+  if (game.state === 'play' || game.state === 'crashing' || game.state === 'finishing' || game.state === 'pulled') {
+    const crashing = game.state === 'crashing', pulled = game.state === 'pulled', finishing = game.state === 'finishing' || pulled;
     const dtGame = realDt * (crashing ? C.crashSlowmo : worldTimeScale());
     if (!finishing) game.mph = Core.speedMph(miles);
     let v = game.mph * speedMult() * Core.MPH_TO_MPS;
     if (crashing) v *= Math.max(0, 1 - game.crashT / 0.5);
-    if (finishing) v *= Math.max(0.15, 1 - game.crashT / C.finishSec);
+    if (pulled) v *= Math.max(0, 1 - game.crashT / (C.copPullSec * 0.7));
+    else if (finishing) v *= Math.max(0.15, 1 - game.crashT / C.finishSec);
     const d = v * dtGame;
     game.sigma += d;
     game.time += dtGame;
@@ -3643,7 +3871,9 @@ function update(realDt) {
     updateSmoke(realDt, player.damageStage);
     if (!crashing && !finishing) updateEffects(realDt);
     if (crashing) { game.crashT += realDt; if (game.crashT >= C.crashSec) gameOver(); }
-    if (finishing) { game.crashT += realDt; if (game.crashT >= C.finishSec) endRun('complete'); }
+    if (pulled) { game.crashT += realDt; if (game.crashT >= C.copPullSec) endRun('pulled'); }
+    else if (finishing) { game.crashT += realDt; if (game.crashT >= C.finishSec) endRun('complete'); }
+    updateCop(dtGame, realDt);
     updateHud();
     updateTailWarn();
     signs.update(game.sigma);
@@ -3664,7 +3894,7 @@ function update(realDt) {
   }
   updateWeather(realDt, game.state === 'title' ? 22 : game.state === 'over' ? 0 : game.mph * speedMult() * worldTimeScale() * Core.MPH_TO_MPS);
   const speedFrac = Math.min(1.3, (game.mph * speedMult() - C.startSpeedMph) / (C.maxSpeedMph - C.startSpeedMph));
-  updateCamera(realDt, game.state === 'play' || game.state === 'crashing' || game.state === 'finishing' ? speedFrac : 0);
+  updateCamera(realDt, game.state === 'play' || game.state === 'crashing' || game.state === 'finishing' || game.state === 'pulled' ? speedFrac : 0);
   if (DEBUG) { updateDebugStrips(); updateDebug(miles); }
 }
 
@@ -3712,6 +3942,9 @@ window.__pedro = {
       rows: game.spawner ? game.spawner.rowCount : 0, roast: game.lastRoast || '',
       nearMisses: game.nearMisses, coins: game.coins, musicStyle: Sfx.style(),
       hudLabel: ui.milesLabel.textContent, hudMiles: ui.miles.textContent,
+      cop: { phase: game.cop.phase, t: game.cop.t, dur: game.cop.dur, plan: game.cop.plan.map((m) => m / Core.METERS_PER_MILE), next: game.cop.next,
+        escapes: game.cop.escapes, chases: game.cop.chases, siren: Sfx.sirenOn(), fx: ui.copFx.classList.contains('on'),
+        hud: ui.hudCop.classList.contains('hidden') ? '' : ui.hudCopTxt.textContent, mult: scoreMultiplier(), z: copCar.z, visible: copCar.group.visible },
       weather: game.weather, fogFar: scene.fog.far, rainOn: rain.m.visible, snowOn: snow.m.visible, slides: game.slides, sliding: !!player.sliding,
       cones: coneMesh.count, closures: game.spawner ? game.spawner.hazards.filter((x) => x.active && x.type === Core.T.CLOSURE).length : 0,
       week: game.week, weekMiles: game.weekMiles, result: game.result, dropped: game.dropped, weekMax: progress.max, weekSel: progress.sel,
@@ -3761,6 +3994,8 @@ window.__pedro = {
     }
     return made;
   },
+  // ?debug only: start a cop chase now (warning first), lasting `sec` game seconds
+  startChase(sec) { if (DEBUG && game.state === 'play' && game.cop.phase === 'off') startChase(sec || Core.copChaseSec(game.week)); },
   // ?debug only: a closed lane starting `ahead` m in front of Pedro, `len` m long
   spawnClosure(lane, ahead, len) {
     if (!DEBUG || !game.spawner) return 0;

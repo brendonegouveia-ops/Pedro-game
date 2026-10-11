@@ -269,7 +269,7 @@ if (!QUICK) await autopilot('finish', '?debug&seed=777&start=9.8', 25, async (st
 if (!QUICK) await autopilot('start', '?debug&seed=4242', 30, (st) => {
   st.nearMisses > 0 ? ok(`near-miss bonus awarded (${st.nearMisses})`) : fail('no near misses recorded');
 });
-if (!QUICK) await autopilot('brutal', '?debug&seed=4243&week=6&start=5', 40, (st) => {
+if (!QUICK) await autopilot('brutal', '?debug&seed=4243&week=6&start=5&copAt=off', 40, (st) => {
   // baseMph: the road speed before power-ups (a Brake Check the bot drove through halves the displayed mph)
   st.week === 6 && st.difficulty >= 0.999 && st.baseMph > 175 ? ok(`week 6 at full difficulty: ${st.baseMph.toFixed(0)} mph, ${st.weather}, road work active`) : fail(`brutal run: week ${st.week}, difficulty ${st.difficulty}, ${st.baseMph} mph`);
   const tw = st.firstTailWarn;
@@ -282,8 +282,13 @@ if (!QUICK) await autopilot('brutal', '?debug&seed=4243&week=6&start=5', 40, (st
 });
 
 // Snow week with road work, plow trains and black ice: following the guaranteed lane must never take a hit or slide
-if (!QUICK) await autopilot('snow', '?debug&seed=4244&week=4&start=7', 40, (st) => {
+if (!QUICK) await autopilot('snow', '?debug&seed=4244&week=4&start=7&copAt=off', 40, (st) => {
   st.weather === 'snow' && st.slides === 0 ? ok(`snow week 4: ${st.mph.toFixed(0)} mph, no black-ice slides on the guaranteed lane`) : fail(`snow run: ${st.weather}, slides ${st.slides}`);
+});
+
+// A cop chase starts right away: the guaranteed lane gets the bot through it without being pulled over
+if (!QUICK) await autopilot('cop', '?debug&seed=4245&week=5&start=3&copAt=3.02', 40, (st) => {
+  st.cop.chases >= 1 && st.hits === 0 ? ok(`cop chase on autopilot: ${st.cop.chases} chase(s), phase "${st.cop.phase}", never pulled over`) : fail('cop autopilot: ' + JSON.stringify(st.cop));
 });
 
 // --- Weeks: HUD, coins, music drop, finish, week picker, saved progress ---
@@ -482,6 +487,78 @@ if (!QUICK) await autopilot('snow', '?debug&seed=4244&week=4&start=7', 40, (st) 
   await pw.close();
 }
 
+// --- Cop chases ---
+{
+  const pc = await context.newPage();
+  const errs = [];
+  pc.on('pageerror', (e) => errs.push(e.message));
+  pc.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
+  const base = pathToFileURL(path.join(root, 'index.html')).href;
+  const sn = () => pc.evaluate(() => window.__pedro.snapshot());
+  const drive = async (q) => {
+    await pc.goto(base + q);
+    await pc.waitForFunction(() => window.__pedro && window.__pedro.ready);
+    await pc.keyboard.press('Enter');
+    await pc.waitForFunction(() => window.__pedro.snapshot().state === 'play');
+  };
+  // How many chases each week gets, and where (seeded, inside the 20–80% window)
+  const plans = {};
+  for (const w of [1, 2, 3, 5, 7]) { await drive(`?debug&seed=21&week=${w}`); plans[w] = (await sn()).cop.plan; }
+  const inWin = (w) => plans[w].every((m) => m >= 0.2 * (8 + 2 * w) && m <= 0.8 * (8 + 2 * w));
+  plans[1].length === 0 && plans[2].length === 0 && plans[3].length === 1 && plans[5].length === 2 && plans[7].length === 3 && [3, 5, 7].every(inWin)
+    ? ok(`cop chases per week: weeks 1–2 none, week 3 one (mile ${plans[3][0].toFixed(1)}), week 5 two, week 7 three, all inside the 20–80% window`)
+    : fail('cop plans: ' + JSON.stringify(plans));
+  // Warning → chase: siren, flashes, mirror, HUD timer, ×1.5 points, Pedro reacts
+  await drive('?debug&seed=8&week=3&start=0.5&copAt=0.56');
+  await pc.evaluate(() => window.__pedro.grant(2));       // no stray traffic hits while we watch
+  await pc.waitForFunction(() => window.__pedro.snapshot().cop.phase === 'warn', null, { timeout: 60000, polling: 50 }).catch(() => {});
+  let c = await sn();
+  const startLines = await pc.evaluate(() => COP_START_LINES);
+  c.cop.siren && c.cop.fx && c.cop.hud === 'COP INCOMING' && c.mirror && /POLICE/.test(c.mirror.label) && startLines.includes(c.speech) && /COP ON YOUR TAIL/.test(c.banner)
+    ? ok(`cop warning: siren on, red/blue flashes, mirror "${c.mirror.label}", HUD "${c.cop.hud}", Pedro: "${c.speech}"`) : fail('cop warning: ' + JSON.stringify({ cop: c.cop, mirror: c.mirror, speech: c.speech, banner: c.banner }));
+  await pc.waitForFunction(() => window.__pedro.snapshot().cop.phase === 'chase', null, { timeout: 30000, polling: 50 }).catch(() => {});
+  c = await sn();
+  await pc.screenshot({ path: path.join(outDir, '27-cop-chase.png') });
+  c.cop.phase === 'chase' && c.cop.mult === 1.5 && /OUTRUN THE COP/.test(c.cop.hud) ? ok(`chase on: "${c.cop.hud}", points ×${c.cop.mult}`) : fail('chase: ' + JSON.stringify(c.cop));
+  // Full Coverage doesn't save you: any hit during the chase = pulled over
+  await pc.waitForFunction(() => window.__pedro.snapshot().effect < 0, null, { timeout: 30000, polling: 50 }).catch(() => {});
+  await pc.evaluate(() => window.__pedro.grant(0));
+  await pc.evaluate(() => window.__pedro.spawnPlows(window.__pedro.snapshot().lane, 1, 40));
+  await pc.waitForFunction(() => window.__pedro.snapshot().state === 'pulled', null, { timeout: 60000, polling: 50 }).catch(() => {});
+  c = await sn();
+  const pullLines = await pc.evaluate(() => COP_PULL_LINES);
+  c.state === 'pulled' && c.shield && pullLines.includes(c.speech) ? ok(`hit during the chase with Full Coverage on: pulled over anyway. Pedro: "${c.speech}"`) : fail('pull over: ' + JSON.stringify({ s: c.state, shield: c.shield, speech: c.speech }));
+  await sleep(500);
+  await pc.screenshot({ path: path.join(outDir, '28-pulled-over.png') });
+  await pc.waitForFunction(() => window.__pedro.snapshot().state === 'over', null, { timeout: 30000 }).catch(() => {});
+  c = await sn();
+  const roasts = await pc.evaluate(() => COP_ROASTS);
+  const roastOk = !c.roast.includes('{') && roasts.some((r) => r.split(/\{\w+\}/).every((piece) => c.roast.includes(piece)));
+  c.result === 'pulled' && c.overTitle === 'Pulled over' && roastOk && !c.cop.siren && /got pulled over/.test(c.shareText) && c.overCta === 'Tap / Space to retry Week 3'
+    ? ok(`pulled-over screen: "${c.overTitle}" — "${c.roast}"; siren off; retry Week 3`) : fail('pulled screen: ' + JSON.stringify({ r: c.result, t: c.overTitle, roast: c.roast, siren: c.cop.siren, share: c.shareText, cta: c.overCta }));
+  // Fresh Detail still protects during a chase
+  await drive('?debug&seed=8&week=3&start=0.5&copAt=0.56');
+  await pc.evaluate(() => window.__pedro.grant(2));
+  await pc.waitForFunction(() => window.__pedro.snapshot().cop.phase === 'chase', null, { timeout: 60000, polling: 50 }).catch(() => {});
+  await pc.evaluate(() => window.__pedro.grant(2));       // fresh 5 s of invincibility for the chase
+  await pc.evaluate(() => window.__pedro.spawnPlows(window.__pedro.snapshot().lane, 1, 30));
+  await pc.waitForFunction(() => window.__pedro.snapshot().plowed > 0 || window.__pedro.snapshot().state !== 'play', null, { timeout: 60000, polling: 50 }).catch(() => {});
+  c = await sn();
+  c.state === 'play' && c.plowed > 0 && c.cop.phase === 'chase' ? ok('Fresh Detail during a chase: plowed through a plow, still driving') : fail('detail in chase: ' + JSON.stringify({ s: c.state, plowed: c.plowed, phase: c.cop.phase }));
+  // Outlast the timer: "lost him" bonus, siren off
+  await drive('?debug&seed=8&week=4&start=0.5&copAt=off');
+  await pc.evaluate(() => window.__pedro.grant(2));
+  const before = (await sn()).score;
+  await pc.evaluate(() => window.__pedro.startChase(1.5));
+  await pc.waitForFunction(() => window.__pedro.snapshot().cop.escapes > 0, null, { timeout: 60000, polling: 50 }).catch(() => {});
+  c = await sn();
+  const escLines = await pc.evaluate(() => COP_ESCAPE_LINES);
+  c.cop.escapes === 1 && !c.cop.siren && !c.cop.fx && c.score - before >= 2000 && escLines.includes(c.speech)
+    ? ok(`outlasted the chase: lost him (+${Math.round(c.score - before)} incl. the 2,000 bonus), siren off, Pedro: "${c.speech}"`) : fail('escape: ' + JSON.stringify({ cop: c.cop, gained: c.score - before, speech: c.speech }));
+  if (errs.length) fail('cop page errors: ' + errs.join(' | ')); else ok('cop page: no errors');
+  await pc.close();
+}
+
 // --- How to play: first visit opens it, taps on it don't start a drive, it never reappears once closed ---
 {
   const hp = await context.newPage();
@@ -492,7 +569,7 @@ if (!QUICK) await autopilot('snow', '?debug&seed=4244&week=4&start=7', 40, (st) 
   let h = await hp.evaluate(() => window.__pedro.snapshot());
   const helpTxt = await hp.evaluate(() => document.querySelector('.help').innerText);
   await hp.screenshot({ path: path.join(outDir, '21-how-to-play.png') });
-  h.help && /Full Coverage/.test(helpTxt) && /Donut/.test(helpTxt) && /3 chouriço links/.test(helpTxt) && /Week 1 is 10 miles/.test(helpTxt) && /black ice/.test(helpTxt) && /road work/i.test(helpTxt)
+  h.help && /Full Coverage/.test(helpTxt) && /Donut/.test(helpTxt) && /3 chouriço links/.test(helpTxt) && /Week 1 is 10 miles/.test(helpTxt) && /black ice/.test(helpTxt) && /road work/i.test(helpTxt) && /pulled over/.test(helpTxt)
     ? ok('first visit: How to Play opens with rules, lives, weeks, road work, weather and every power-up') : fail('help on first visit: ' + JSON.stringify({ open: h.help }));
   const hb = await hp.locator('.help h3').first().boundingBox();
   await hp.mouse.click(hb.x + 10, hb.y + 5);
