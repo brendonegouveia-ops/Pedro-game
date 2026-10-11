@@ -6,6 +6,9 @@
 
 - **Weeks are levels.** Each week is one drive to game night: Week 1 is 10 miles, Week 2 is 12, and so on (+2 mi a week, capped at 25). Every week starts further up the difficulty curve and tops out faster (165 mph in Week 1, +3 mph a week up to 195). Each week's game night has its own theme (Catan night, Poker night, Mario Kart night…).
 - **Checkpoints.** Making it to game night pays a bonus (3,000 + 1,000 per week, plus 500 per chouriço link left), Pedro says something, and the next week unlocks. A wreck retries the same week. Links refill every week. Progress is saved on the phone, and the title screen has a week picker (◀ ▶, or ← → on a keyboard) for any week you've reached.
+- **Weather.** Weeks 1–2 are clear. Week 3 is rain: the fog pulls in, so traffic shows up about 2 s out instead of 3. Week 4 is snow. From Week 5 on, each week is rain or snow (fixed per week number, so Week 7 is always the same weather).
+- **Road work** (from Week 2, in the later part of each week, earlier as the weeks go on): an edge lane closes for 220–480 m. An arrow board flashes which way to merge, an orange diamond sign stands on the shoulder before it, and cones and barrels line the closed lane. It never closes the lane you need: the fairness check treats it as a blocker for its whole length.
+- **Snow hazards.** *Snowplow trains*: 2–3 slow orange plows staggered across adjacent lanes, always leaving a reachable lane open. *Black ice*: shiny blue patches in the two middle lanes. Steering onto one carries you one more lane in the same direction (with a fishtail, a skid and a Pedro line). Driving straight over it is fine, and the guaranteed lane never runs through ice.
 - **Final stretch.** Two miles out, Carlson turns the speakers up: the accordion music builds and drops into dubstep. The last ~200 m before the driveway are traffic-free.
 - **Coins** along the road pay extra, and a full trail earns a bonus. Many trails run straight at a car, so grabbing them all means swerving out at the last second.
 - **How to Play** opens on the first visit (and from the ❓ button on the title screen): rules, lives, coins, tailgaters, every power-up.
@@ -28,6 +31,10 @@ Everything tunable lives in the `CONFIG` object at the top of the `<script id="p
 | Weeks | `weekBaseMiles` (10), `weekMilesStep` (2), `weekMaxMiles` (25): week length. `weekDifficultyStep` (0.13) / `weekDifficultyCap` (0.85): how far up the curve each week starts. `weekTopSpeedStepMph` (3) / `weekTopSpeedCapMph` (195): top speed per week |
 | Week rewards | `weekBonus` (`[3000, 1000]` = 3,000 + 1,000 × (week − 1)), `weekLifeBonus` (per link left) |
 | Final stretch | `weekDropMiles` (dubstep drop, 2 mi out), `weekFinishClearMeters` (traffic-free run-in), `finishSec` |
+| Weather | `weatherWeeks` (`['clear', 'clear', 'rain', 'snow']` for weeks 1–4), `weatherRotate` (what later weeks pick from), `weather.{clear,rain,snow}.fogNear/fogFar` (visibility) |
+| Road work | `closureMinWeek` (2), `closureChance`, `closureMeters`, `closureGapMeters`, `closureStartFrac` / `closureStartFracStep` / `closureStartFracMin` (how far into a week closures start) |
+| Snowplows | `plowChance`, `plowTrioChance`, `plowStaggerMeters`, `plowSpeedFrac`, `hazardSize.plow` |
+| Black ice | `iceChance`, `iceMeters`, `iceSlideMs` |
 | Coins | `coinPoints`, `coinTrailBonus`, `coinTrailChance`, `coinTrailMin`/`Max`, `coinRiskyChance`, `coinBailSec` |
 | Lives | `lives` (3), `hitGraceSec` (invulnerable time after a hit) |
 | Speech bubble time | `speechSec` |
@@ -58,6 +65,8 @@ These arrays sit right below `CONFIG`. Add a string per inside joke:
 | `DONUT_LINES` | Grabbing a donut. |
 | `WEEK_COMPLETE_LINES` | Making it to game night (week-complete screen). `{week}` is filled in. |
 | `GAME_NIGHTS` | What's on the table each week (cycles): "Catan night", "Poker night"… |
+| `ROADWORK_LINES`, `PLOW_LINES` | The first road closure / plow train of a drive. |
+| `ICE_LINES` | Sliding on black ice. |
 
 `ROASTS` also fill in `{left}` (miles short of game night) and `{week}`.
 
@@ -138,6 +147,8 @@ Both values are designed to be public. The table policies only allow reading sco
 
 Traffic comes in rows from a seeded PRNG (mulberry32). Every row is validated before it is committed: it must leave a **guaranteed-open lane** that Pedro can reach from the previous row's open lane within the clear gap between the rows. Each lane change counts as `laneChangeMs + reactionSec` at the speed Pedro will be doing when he gets there, multiplied by `donutSpeedMult`, so the guarantee holds even mid-donut. Every move also has to leave 1.5 m of spare room. Lane-changers count as blocking both of their lanes, and tailgaters count as blocking theirs. A row that fails is regenerated, up to 8 tries, then replaced with an empty row.
 
+Road closures span many rows, so they get extra rules: a closure starts exactly where a row starts, ends exactly where a row ends, only ever closes an edge lane that isn't the lane Pedro is guaranteed to be in, and its lane counts as blocked in every row (and every gap) along the way. Black ice counts as blocked for the guaranteed lane (you're never forced onto it). Snowplow trains are ordinary rows of slow, long vehicles.
+
 - **Replay a run:** the game-over screen shows its seed. Open `…/pedro-game/?seed=12345` to replay that exact traffic. The seed applies to the first run only; restarting goes back to fresh random runs.
 - **See the guarantee:** add `?debug` to the URL (e.g. `?debug&seed=12345`). A green strip marks each row's guaranteed-open lane, and a panel shows fps, difficulty, and spawner stats. `?debug&start=2.5` starts the run at mile 2.5, and `?debug&week=4` jumps to Week 4.
 
@@ -149,14 +160,15 @@ None of this is needed to play; it's for checking changes before pushing.
 cd tools && npm install
 node fairness.mjs            # weeks 1, 3, 6, 11 × 10 seeds × 1,000 rows, independent fairness check (no browser)
 node fairness.mjs 1000 10 --weeks=1,2,3,4,5   # pick the weeks
+node fairness.mjs 1000 3 --mutate=closure --weeks=2,4   # also: --mutate=ice; each sabotage must be caught
 node fairness.mjs 1000 3 --mutate   # sabotages the spawner to prove the checker catches violations
 node smoke.mjs               # headless Chromium at iPhone size: input, crash, power-ups, audio, share, autopilot
 node smoke.mjs --quick       # same, minus the two long autopilot runs
 ```
 
-- `fairness.mjs` re-derives every hitbox interval and each week's difficulty offset and top speed from `CONFIG` instead of trusting the spawner. It checks each row's guaranteed lane, then runs a brute-force path search over the whole run.
+- `fairness.mjs` re-derives every hitbox interval and each week's difficulty offset and top speed from `CONFIG` instead of trusting the spawner. It checks each row's guaranteed lane, that no move between rows crosses a closed lane, that closures start and end on row boundaries, then runs a brute-force path search over the whole run. It also fails if closures, plows or ice show up in a week where they don't belong (or never show up where they do).
 - `smoke.mjs` fails on any console error and writes screenshots to `tools/out/`.
-- Its autopilot drives with real key events, following the guaranteed lane and dodging as late as it safely can. It must get through the first 30 s, the run-in to game night at the end of Week 1, and full-difficulty Week 6 traffic at ~180 mph **without taking a single hit**.
+- Its autopilot drives with real key events, following the guaranteed lane and dodging as late as it safely can. It must get through the first 30 s, the run-in to game night at the end of Week 1, full-difficulty Week 6 (rain + road work) at ~180 mph, and a Week 4 snow stretch with plows, black ice and road work **without taking a single hit or sliding on ice**.
 
 ## Notes
 

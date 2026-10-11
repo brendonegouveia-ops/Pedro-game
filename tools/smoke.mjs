@@ -269,8 +269,8 @@ if (!QUICK) await autopilot('finish', '?debug&seed=777&start=9.8', 25, async (st
 if (!QUICK) await autopilot('start', '?debug&seed=4242', 30, (st) => {
   st.nearMisses > 0 ? ok(`near-miss bonus awarded (${st.nearMisses})`) : fail('no near misses recorded');
 });
-if (!QUICK) await autopilot('brutal', '?debug&seed=4243&week=6&start=3', 40, (st) => {
-  st.week === 6 && st.difficulty >= 0.999 && st.mph > 175 ? ok(`week 6 at full difficulty: ${st.mph.toFixed(0)} mph`) : fail(`brutal run: week ${st.week}, difficulty ${st.difficulty}, ${st.mph} mph`);
+if (!QUICK) await autopilot('brutal', '?debug&seed=4243&week=6&start=5', 40, (st) => {
+  st.week === 6 && st.difficulty >= 0.999 && st.mph > 175 ? ok(`week 6 at full difficulty: ${st.mph.toFixed(0)} mph, ${st.weather}, road work active`) : fail(`brutal run: week ${st.week}, difficulty ${st.difficulty}, ${st.mph} mph`);
   const tw = st.firstTailWarn;
   if (!tw) { fail('no tailgater mirror seen in 40 s at full difficulty'); return; }
   const m = tw.first;
@@ -278,6 +278,11 @@ if (!QUICK) await autopilot('brutal', '?debug&seed=4243&week=6&start=3', 40, (st
   /TAILGATERS/.test(m.label) ? ok(`general alert shown: "${m.label}"`) : fail('mirror label: ' + m.label);
   tw.mismatches === 0 ? ok(`mirror matched the real tailgaters (dots + lanes) on all ${tw.checks} checks; most at once: ${tw.max.truth} in lane(s) ${tw.max.truthLanes.join(',')}`)
     : fail(`mirror disagreed with the hazard list on ${tw.mismatches}/${tw.checks} checks`);
+});
+
+// Snow week with road work, plow trains and black ice: following the guaranteed lane must never take a hit or slide
+if (!QUICK) await autopilot('snow', '?debug&seed=4244&week=4&start=7', 40, (st) => {
+  st.weather === 'snow' && st.slides === 0 ? ok(`snow week 4: ${st.mph.toFixed(0)} mph, no black-ice slides on the guaranteed lane`) : fail(`snow run: ${st.weather}, slides ${st.slides}`);
 });
 
 // --- Weeks: HUD, coins, music drop, finish, week picker, saved progress ---
@@ -333,7 +338,7 @@ if (!QUICK) await autopilot('brutal', '?debug&seed=4243&week=6&start=3', 40, (st
   let wk = await pg.evaluate(() => ({ name: document.getElementById('weekName').textContent, sub: document.getElementById('weekSub').textContent,
     prev: document.getElementById('weekPrev').disabled, next: document.getElementById('weekNext').disabled }));
   await pg.screenshot({ path: path.join(outDir, '20-title-week-picker.png') });
-  g.state === 'title' && wk.name === 'WEEK 2' && /^12 mi · /.test(wk.sub) && !wk.prev && wk.next
+  g.state === 'title' && wk.name === 'WEEK 2' && /^12 mi · ☀️ Clear$/.test(wk.sub) && !wk.prev && wk.next
     ? ok(`Weeks button: title with "${wk.name}" (${wk.sub}) selected, Week 3 locked`) : fail('title picker: ' + JSON.stringify({ s: g.state, wk }));
   await pg.keyboard.press('ArrowLeft');
   wk = await pg.evaluate(() => document.getElementById('weekName').textContent);
@@ -362,6 +367,120 @@ if (!QUICK) await autopilot('brutal', '?debug&seed=4243&week=6&start=3', 40, (st
   await pg.close();
 }
 
+// --- Weather, road work, snowplows, black ice ---
+{
+  const pw = await context.newPage();
+  const errs = [];
+  pw.on('pageerror', (e) => errs.push(e.message));
+  pw.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
+  const base = pathToFileURL(path.join(root, 'index.html')).href;
+  const sn = () => pw.evaluate(() => window.__pedro.snapshot());
+  const drive = async (q, invincible = true) => {
+    await pw.goto(base + q);
+    await pw.waitForFunction(() => window.__pedro && window.__pedro.ready);
+    await pw.keyboard.press('Enter');
+    await pw.waitForFunction(() => window.__pedro.snapshot().state === 'play');
+    if (invincible) await pw.evaluate(() => window.__pedro.grant(2));
+  };
+  // Weather per week (+ start banner)
+  const wx = {};
+  for (const w of [1, 2, 3, 4]) {
+    await drive(`?debug&seed=8&week=${w}&start=1`, false);
+    await sleep(600);
+    wx[w] = await sn();
+    await pw.screenshot({ path: path.join(outDir, `22-weather-week${w}.png`) });
+  }
+  const want = { 1: ['clear', 165, false, false], 2: ['clear', 165, false, false], 3: ['rain', 105, true, false], 4: ['snow', 135, false, true] };
+  const wxOk = Object.entries(want).every(([w, [k, f, r, sw]]) => wx[w].weather === k && wx[w].fogFar === f && wx[w].rainOn === r && wx[w].snowOn === sw);
+  wxOk ? ok('weather: weeks 1–2 clear (165 m visibility), week 3 rain (105 m, rain falling), week 4 snow (135 m, snow falling)')
+    : fail('weather: ' + JSON.stringify(Object.fromEntries(Object.entries(wx).map(([w, x]) => [w, [x.weather, x.fogFar, x.rainOn, x.snowOn]]))));
+  /WEEK 3 .*RAIN/.test(wx[3].banner) && /WEEK 4 .*SNOW .*black ice/i.test(wx[4].banner) ? ok(`week start banner: "${wx[4].banner}"`) : fail('start banners: ' + wx[3].banner + ' | ' + wx[4].banner);
+  const rot = await pw.evaluate(() => [5, 6, 7, 8, 9, 10, 11, 12].map((w) => PedroCore.weatherOf(w)));
+  rot.every((k) => k === 'rain' || k === 'snow') && rot.includes('rain') && rot.includes('snow')
+    ? ok(`weeks 5–12 rotate rain/snow: ${rot.join(', ')}`) : fail('rotation: ' + rot.join(','));
+
+  // Road closure ahead in Pedro's lane: a wall (costs a link, doesn't fly away), with cones, arrow board, and Pedro reacting
+  await drive('?debug&seed=8&week=2&start=1', false);
+  let g = await sn();
+  const lane = g.lane;
+  await pw.evaluate((l) => window.__pedro.spawnClosure(l, 70, 160), lane);
+  await sleep(400);
+  g = await sn();
+  const roadLines = await pw.evaluate(() => ROADWORK_LINES);
+  g.cones > 10 && roadLines.includes(g.speech) ? ok(`closure: ${g.cones} cones drawn, Pedro: "${g.speech}"`) : fail(`closure visuals: cones ${g.cones}, speech "${g.speech}"`);
+  await pw.screenshot({ path: path.join(outDir, '23-road-closure.png') });
+  await pw.waitForFunction(() => window.__pedro.snapshot().lives < 3, null, { timeout: 60000 }).catch(() => {});
+  g = await sn();
+  const still = await pw.evaluate(() => window.__pedro.hazards().filter((h) => h.type === 'closure').map((h) => h.ahead - h.hl));
+  g.lives === 2 && still.length === 1 && still[0] < 3 ? ok(`driving into the closed lane costs a link (hit at the arrow board, ${still[0].toFixed(1)} m); the closure stays put`)
+    : fail(`closure hit: lives ${g.lives}, closure near end ${JSON.stringify(still)}`);
+  // Fresh Detail drives straight through cones
+  await drive('?debug&seed=8&week=2&start=1');
+  g = await sn();
+  await pw.evaluate((l) => window.__pedro.spawnClosure(l, 40, 60), g.lane);
+  await pw.waitForFunction(() => window.__pedro.hazards().every((h) => h.type !== 'closure' || h.ahead < -40), null, { timeout: 60000 }).catch(() => {});
+  g = await sn();
+  g.lives === 3 && g.hits === 0 ? ok('Fresh Detail plows through road work without losing a link') : fail(`detail through closure: lives ${g.lives}`);
+
+  // Generated closures (late in week 2): the closed lane is never a row's guaranteed lane
+  await drive('?debug&seed=3&week=2&start=8');     // seed 3: the spawner opens a closure in the first row
+  const found = await pw.waitForFunction(() => window.__pedro.hazards().some((h) => h.type === 'closure'), null, { timeout: 90000, polling: 200 }).then(() => true, () => false);
+  if (found) {
+    await pw.waitForFunction(() => window.__pedro.snapshot().cones > 4, null, { timeout: 60000, polling: 100 }).catch(() => {});
+    await pw.screenshot({ path: path.join(outDir, '24-generated-closure.png') });
+    const chk = await pw.evaluate(() => {
+      const cl = window.__pedro.hazards().find((h) => h.type === 'closure'), c = window.__pedro.corridor();
+      const lo = cl.sigma - cl.hs, hi = cl.sigma + cl.hs;
+      const over = c.rows.filter((r) => r.B > lo && r.A < hi);
+      return { lane: cl.lane, len: 2 * cl.hl, rows: over.length, bad: over.filter((r) => r.g === cl.lane || !(r.mask & (1 << cl.lane))).length };
+    });
+    chk.bad === 0 && (chk.lane === 0 || chk.lane === 3) ? ok(`generated closure: edge lane ${chk.lane}, ${chk.len.toFixed(0)} m; closed lane blocked and never the guaranteed lane in ${chk.rows} overlapping rows`)
+      : fail('generated closure: ' + JSON.stringify(chk));
+  } else fail('no road closure generated in the second half of week 2');
+
+  // Black ice: steering onto it slides one more lane; driving straight over it does nothing
+  await drive('?debug&seed=8&week=4&start=0.3');
+  g = await sn();
+  await pw.evaluate((l) => window.__pedro.spawnIce(l + 1, 3, 45), g.lane);
+  await sleep(100);
+  await pw.keyboard.press('ArrowRight');
+  await pw.waitForFunction(() => window.__pedro.snapshot().slides > 0 && !window.__pedro.snapshot().tweening, null, { timeout: 15000 }).catch(() => {});
+  const g2 = await sn();
+  await pw.screenshot({ path: path.join(outDir, '25-black-ice-slide.png') });
+  const iceLines = await pw.evaluate(() => ICE_LINES);
+  g2.lane === g.lane + 2 && g2.slides === 1 && iceLines.includes(g2.speech)
+    ? ok(`black ice: steered right from lane ${g.lane} onto ice, slid on to lane ${g2.lane}; Pedro: "${g2.speech}"`) : fail(`ice slide: lane ${g.lane} → ${g2.lane}, slides ${g2.slides}, "${g2.speech}"`);
+  await pw.evaluate((l) => window.__pedro.spawnIce(l, 5, 30), g2.lane);
+  await pw.waitForFunction(() => window.__pedro.hazards().every((h) => h.type !== 'ice' || h.ahead < -25), null, { timeout: 60000 }).catch(() => {});
+  const g3 = await sn();
+  g3.lane === g2.lane && g3.slides === 1 ? ok('driving straight over black ice keeps the lane') : fail(`straight over ice: lane ${g2.lane} → ${g3.lane}, slides ${g3.slides}`);
+
+  // Snowplow train: generated in snow weeks, solid (hitting one costs a link), Pedro reacts
+  await drive('?debug&seed=12&week=4&start=2');
+  const plows = await pw.waitForFunction(() => window.__pedro.hazards().some((h) => h.type === 'plow' && h.ahead < 120), null, { timeout: 90000, polling: 100 }).then(() => true, () => false);
+  if (plows) {
+    await sleep(500);
+    await pw.screenshot({ path: path.join(outDir, '26-snowplow-train.png') });
+    const tr = await pw.evaluate(() => { const ps = window.__pedro.hazards().filter((h) => h.type === 'plow'); return { n: ps.length, lanes: [...new Set(ps.map((p) => p.lane))].sort() }; });
+    g = await sn();
+    const plowLines = await pw.evaluate(() => PLOW_LINES);
+    tr.n >= 2 && plowLines.includes(g.speech) ? ok(`snowplow train generated: ${tr.n} plows in lanes ${tr.lanes.join(',')}; Pedro: "${g.speech}"`) : fail('plow train: ' + JSON.stringify({ tr, speech: g.speech }));
+  } else fail('no snowplow train generated in week 4');
+  await drive('?debug&seed=8&week=4&start=0.3', false);
+  g = await sn();
+  await pw.evaluate((l) => window.__pedro.spawnPlows(l, 1, 60), g.lane);
+  await pw.waitForFunction(() => window.__pedro.snapshot().lives < 3, null, { timeout: 60000 }).catch(() => {});
+  g = await sn();
+  g.lives === 2 ? ok('hitting a plow costs a link') : fail('plow hit: lives ' + g.lives);
+  // clear / rain weeks never get plows or ice (generation checked in fairness.mjs too)
+  await drive('?debug&seed=12&week=3&start=2');
+  await sleep(4000);
+  const rainHaz = await pw.evaluate(() => window.__pedro.hazards().filter((h) => h.type === 'plow' || h.type === 'ice').length);
+  rainHaz === 0 ? ok('rain week: no plows or black ice') : fail('rain week has ' + rainHaz + ' plows/ice');
+  if (errs.length) fail('weather page errors: ' + errs.join(' | ')); else ok('weather page: no errors');
+  await pw.close();
+}
+
 // --- How to play: first visit opens it, taps on it don't start a drive, it never reappears once closed ---
 {
   const hp = await context.newPage();
@@ -372,8 +491,8 @@ if (!QUICK) await autopilot('brutal', '?debug&seed=4243&week=6&start=3', 40, (st
   let h = await hp.evaluate(() => window.__pedro.snapshot());
   const helpTxt = await hp.evaluate(() => document.querySelector('.help').innerText);
   await hp.screenshot({ path: path.join(outDir, '21-how-to-play.png') });
-  h.help && /Full Coverage/.test(helpTxt) && /Donut/.test(helpTxt) && /3 chouriço links/.test(helpTxt) && /Week 1 is 10 miles/.test(helpTxt)
-    ? ok('first visit: How to Play opens with rules, lives, weeks and every power-up') : fail('help on first visit: ' + JSON.stringify({ open: h.help }));
+  h.help && /Full Coverage/.test(helpTxt) && /Donut/.test(helpTxt) && /3 chouriço links/.test(helpTxt) && /Week 1 is 10 miles/.test(helpTxt) && /black ice/.test(helpTxt) && /road work/i.test(helpTxt)
+    ? ok('first visit: How to Play opens with rules, lives, weeks, road work, weather and every power-up') : fail('help on first visit: ' + JSON.stringify({ open: h.help }));
   const hb = await hp.locator('.help h3').first().boundingBox();
   await hp.mouse.click(hb.x + 10, hb.y + 5);
   await hp.keyboard.press('ArrowLeft');

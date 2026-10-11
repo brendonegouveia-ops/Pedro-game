@@ -306,7 +306,7 @@
   <p class="sub">Every week Pedro drives to game night at Carlson's. Every week the drive gets longer and faster. Three chouriço links. One brand-new silver Jetta. Same driver.</p>
   <div class="weekPick" id="weekPick">
     <button class="wkBtn" id="weekPrev" type="button" aria-label="Previous week">◀</button>
-    <div class="wkInfo"><b id="weekName">WEEK 1</b><small id="weekSub">10 mi · Catan night</small></div>
+    <div class="wkInfo"><b id="weekName">WEEK 1</b><small id="weekSub">10 mi · ☀️ Clear</small><small id="weekNight">Catan night</small></div>
     <button class="wkBtn" id="weekNext" type="button" aria-label="Next week">▶</button>
   </div>
   <div class="cta">Tap / press any key to drive</div>
@@ -371,6 +371,8 @@
     <p>Pedro has <b>3 chouriço links</b> (bottom-left). Every hit costs one and dents the Jetta. Lose all three and the drive is over. You get all three back every week.</p>
     <h3>Coins &amp; tailgaters</h3>
     <p>🪙 Grab coins for points, and a whole trail for a bonus. Trails often run right at a car, so swerve out at the last second. When the <b>mirror</b> pops up at the top, tailgaters are coming from behind: a red dot in your lane means move.</p>
+    <h3>Road work &amp; weather</h3>
+    <p>From Week 2, <b>road work</b> closes a lane for a stretch: an arrow board shows which way to merge, and cones line the closed lane. Week 3 is <b>rain</b>, so you see traffic later. From Week 4 it's <b>snow</b> (and later weeks rotate rain and snow): <b>snowplow trains</b> block 2–3 lanes, and steering onto <b>black ice</b> (the shiny blue patches) slides you one extra lane. Driving straight over ice is fine.</p>
     <h3>Power-ups</h3>
     <ul>
       <li><i style="--pc:#3aa0ff">🛡</i><span><b>Full Coverage:</b> absorbs one crash.</span></li>
@@ -437,6 +439,34 @@ const CONFIG = {
   weekFinishClearMeters: 200,  // no new traffic in the last stretch before Carlson's driveway
   finishSec: 1.8,              // real seconds of coasting into game night before the week-complete screen
 
+  // --- Weather. Weeks 1–4 follow weatherWeeks; after that each week is rain or snow (fixed per week number).
+  weatherWeeks: ['clear', 'clear', 'rain', 'snow'],
+  weatherRotate: ['rain', 'snow'],
+  // Visibility per weather (meters). Rain pulls the fog in: traffic shows up ~2 s out instead of ~3 s.
+  weather: {
+    clear: { fogNear: 45, fogFar: 165 },
+    rain: { fogNear: 18, fogFar: 105 },
+    snow: { fogNear: 30, fogFar: 135 },
+  },
+
+  // --- Road work: an edge lane closed for a stretch (arrow board + cone line). Never closes the lane Pedro needs.
+  closureMinWeek: 2,
+  closureChance: [0.035, 0.07], // chance per row once allowed, difficulty 0 → 1
+  closureMeters: [220, 480],    // length of a closure (random in this range)
+  closureGapMeters: 450,        // open road between two closures
+  closureStartFrac: 0.6,        // closures appear after this fraction of the week (week 2)…
+  closureStartFracStep: 0.1,    // …this much earlier each later week…
+  closureStartFracMin: 0.15,    // …but never before this fraction
+
+  // --- Snow weeks: snowplow trains (2–3 plows staggered across adjacent lanes) and black ice.
+  plowSpeedFrac: 0.15,          // plows crawl (traffic is trafficSpeedFrac)
+  plowChance: [0.03, 0.06],     // chance per row
+  plowTrioChance: [0.2, 0.6],   // chance a train has 3 plows instead of 2
+  plowStaggerMeters: 16,        // echelon spacing between plows (sigma meters)
+  iceChance: [0.12, 0.22],      // chance per row of a black-ice patch (middle lanes only)
+  iceMeters: [14, 24],          // patch length
+  iceSlideMs: 260,              // steering onto ice slides Pedro one more lane, this slowly
+
   // --- Camera ---
   fovBase: 62,
   fovMax: 76,                  // FOV at max speed
@@ -462,6 +492,7 @@ const CONFIG = {
   playerSize: [1.84, 4.66],    // [width, length] meters
   hazardSize: {                // [width, length] meters (visual)
     sedan: [1.84, 4.66], truck: [2.5, 12.6], debris: [2.3, 1.6], changer: [1.84, 4.66], tailgater: [1.84, 4.66],
+    plow: [2.6, 10.5],
   },
   // Hazards unlock progressively by distance (miles). Sedans are always on.
   unlockMiles: { truck: 0.15, debris: 0.4, changer: 0.8, tailgater: 1.4 },
@@ -636,6 +667,27 @@ const WEEK_COMPLETE_LINES = [
   "Delulu? Nah, I made it",
   "Traffic was NOT the vibe. Anyway, I'm here",
 ];
+// First road closure of a drive:
+const ROADWORK_LINES = [
+  "Road work?? On game night??",
+  "Who closes a lane at this hour 😤",
+  "Merge, bro. Respectfully.",
+  "Cones are NOT the vibe",
+];
+// First snowplow train of a drive:
+const PLOW_LINES = [
+  "Plow convoy. We go around.",
+  "Snowplows in formation, bro",
+  "That's a whole wall of plows 💀",
+];
+// Sliding on black ice:
+const ICE_LINES = [
+  "Black ice?! I'm drifting 😭",
+  "Tokyo Drift: Fall River edition",
+  "The Jetta has a mind of its own",
+  "Ice ice baby. NOT like this",
+  "I meant to do that",
+];
 // What's on the table each week (cycles). Shown on the title screen, HUD and week-complete screen.
 const GAME_NIGHTS = [
   "Catan night",
@@ -700,7 +752,18 @@ const PedroCore = (() => {
     weekTopMph = weekTopSpeedMph(weekNo);
     return weekNo;
   }
+  // 'clear' | 'rain' | 'snow' for week w
+  function weatherOf(w) {
+    const W = CONFIG.weatherWeeks;
+    if (w <= W.length) return W[w - 1];
+    const R = CONFIG.weatherRotate;
+    return R[Math.floor(mulberry32(Math.imul(w, 0x9E3779B1) ^ 0x5EED)() * R.length)];
+  }
+  function closureStartFrac(w) {
+    return Math.max(CONFIG.closureStartFracMin, CONFIG.closureStartFrac - CONFIG.closureStartFracStep * (w - CONFIG.closureMinWeek));
+  }
   function week() { return weekNo; }
+  function weather() { return weatherOf(weekNo); }
   function weekOffset() { return weekOffsetMiles; }
   function topSpeedMph() { return weekTopMph; }
 
@@ -731,19 +794,24 @@ const PedroCore = (() => {
   // with speed fraction k is at world distance (1-k)*(sigma_h - sigma) ahead of Pedro,
   // so its position is an exact function of sigma — rows stay rigid as speed changes,
   // and each hazard blocks its lane(s) for the sigma interval [sigma_h - hs, sigma_h + hs].
-  const T = { SEDAN: 0, TRUCK: 1, DEBRIS: 2, CHANGER: 3, TAILGATER: 4, POWERUP: 5, COIN: 6 };
-  const TYPE_NAMES = ['sedan', 'truck', 'debris', 'changer', 'tailgater', 'powerup', 'coin'];
+  // CLOSURE (a closed lane) and ICE have per-hazard lengths; ICE never collides, but the guaranteed lane avoids it.
+  const T = { SEDAN: 0, TRUCK: 1, DEBRIS: 2, CHANGER: 3, TAILGATER: 4, POWERUP: 5, COIN: 6, CLOSURE: 7, PLOW: 8, ICE: 9 };
+  const TYPE_NAMES = ['sedan', 'truck', 'debris', 'changer', 'tailgater', 'powerup', 'coin', 'closure', 'plow', 'ice'];
 
   function typeK(type) {
-    if (type === T.DEBRIS) return 0;
+    if (type === T.DEBRIS || type === T.CLOSURE || type === T.ICE) return 0;
     if (type === T.TAILGATER) return CONFIG.tailgaterSpeedFrac;
+    if (type === T.PLOW) return CONFIG.plowSpeedFrac;
     return CONFIG.trafficSpeedFrac;
   }
   function typeSize(type) {
     if (type === T.POWERUP) return [1.6, 1.6];
     if (type === T.COIN) return [1.0, 1.0];
+    if (type === T.CLOSURE || type === T.ICE) return [CONFIG.laneWidth * 0.9, 0];   // length is per hazard
     return CONFIG.hazardSize[TYPE_NAMES[type]];
   }
+  // Ice: blocks the guaranteed lane while Pedro's car overlaps the whole patch (no hitbox shrink).
+  function iceHalfSpan(len) { return CONFIG.playerSize[1] * CONFIG.hitboxScale / 2 + len / 2; }
   // Half-length (in sigma) of the interval during which this hazard's hitbox overlaps Pedro's.
   function halfSpan(type) {
     const reach = (CONFIG.playerSize[1] + typeSize(type)[1]) * CONFIG.hitboxScale / 2;
@@ -792,7 +860,7 @@ const PedroCore = (() => {
     const POOL = 320, ROWS = 48, RECENT = 96;
     const hazards = [];
     for (let i = 0; i < POOL; i++) hazards.push({
-      active: false, id: 0, type: 0, lane: 0, lane2: 0, k: 0, sigma: 0, hs: 0, w: 0, l: 0, row: 0, color: 0, variant: 0,
+      active: false, id: 0, type: 0, lane: 0, lane2: 0, k: 0, sigma: 0, hs: 0, w: 0, l: 0, hl: 0, lo: 0, seen: false, row: 0, color: 0, variant: 0,
       moveStart: 0, moveEnd: 0, blinkStart: 0, power: 0,
       vis: null, hit: false, bounced: false, nearMissed: false, minDx: 99, entered: false, lateDodge: false, bx: 0, by: 0, bz: 0, bvx: 0, bvy: 0, bvz: 0, spin: 0, ry: 0, fade: 1,
     });
@@ -805,12 +873,16 @@ const PedroCore = (() => {
     // Scratch (no per-row allocation)
     const order = new Int8Array(CONFIG.lanes);
     const cType = new Int8Array(8), cLane = new Int8Array(8), cLane2 = new Int8Array(8);
-    const cOff = new Float64Array(8), cColor = new Int8Array(8), cVariant = new Int8Array(8);
+    const cOff = new Float64Array(8), cColor = new Int8Array(8), cVariant = new Int8Array(8), cLen = new Float64Array(8);
+    const pHalfL = CONFIG.playerSize[1] * CONFIG.hitboxScale / 2;
+    const spanOf = (i) => (cType[i] === T.ICE ? iceHalfSpan(cLen[i]) : halfSpan(cType[i]));
     const openLanes = new Int8Array(CONFIG.lanes);
 
     const st = {
       seed, rng, hazards, rows, rowCount: 0, lastB: (startSigma || 0) + CONFIG.startClearMeters, lastG: startLane,
       fallbacks: 0, retries: 0, nextId: 1, lastPowerSigma: -Infinity, nextTrail: 1,
+      // road closure in progress: lane, target end, its hazard; and where the last one ended
+      cl: { on: false, lane: -1, target: 0, h: null, lastHi: -Infinity, lastLane: -1, nextOk: -Infinity },
       horizon: CONFIG.spawnAheadMeters / (1 - CONFIG.trafficSpeedFrac),
       stopAt: endSigma ? endSigma - CONFIG.weekFinishClearMeters : Infinity,
     };
@@ -873,13 +945,48 @@ const PedroCore = (() => {
       const vA = speedAt(A);                        // speed is monotonic → worst case over the gap
       const budget = Math.floor((gapSigma - CORRIDOR_SLACK_M) / (vA * laneChangeSec()));
       const gPrev = st.lastG;
+      const LN = CONFIG.lanes, snow = weatherOf(weekNo) === 'snow';
+
+      // Road closure: ends once a row starts past its target; a new one starts on this row (never on Pedro's lane).
+      const cl = st.cl;
+      if (cl.on && A >= cl.target) {
+        cl.on = false; cl.lastHi = cl.h ? cl.h.sigma + cl.h.hs : B0; cl.lastLane = cl.lane; cl.h = null;
+        cl.nextOk = cl.lastHi + CONFIG.closureGapMeters;
+      }
+      let closedMask = cl.on ? 1 << cl.lane : 0, startClosure = -1;
+      if (!cl.on && weekNo >= CONFIG.closureMinWeek && A >= cl.nextOk &&
+          B0 / METERS_PER_MILE >= closureStartFrac(weekNo) * weekMiles(weekNo) && rng() < weightAt(CONFIG.closureChance, d)) {
+        const cand = gPrev === 0 ? LN - 1 : gPrev === LN - 1 ? 0 : (rng() < 0.5 ? 0 : LN - 1);
+        if (ghostOk(T.DEBRIS, 1 << cand, A + pHalfL + 1)) { startClosure = cand; closedMask = 1 << cand; }
+      }
+      // a tailgater must not come up behind Pedro through a closure that just ended
+      const tgBlocked = A < cl.lastHi + CONFIG.tailgaterWarnMeters / (CONFIG.tailgaterSpeedFrac - 1) ? 1 << cl.lastLane : 0;
+      const freeLanes = LN - (closedMask ? 1 : 0);
 
       let count = 0, mask = 0, B = A, ok = false, nOpen = 0, fallback = false;
       for (let attempt = 0; attempt < CONFIG.maxRowAttempts && !ok; attempt++) {
         if (attempt > 0) st.retries++;
-        count = 0; mask = 0;
+        count = 0; mask = closedMask;
         if (rng() < weightAt(CONFIG.emptyRowChance, d)) { ok = true; break; }
-        const n = pickBlockedCount(d);
+        if (snow && rng() < weightAt(CONFIG.plowChance, d)) {
+          // Snowplow train: 2–3 plows in adjacent lanes, staggered like an echelon
+          const size = Math.min(rng() < weightAt(CONFIG.plowTrioChance, d) ? 3 : 2, freeLanes - 1);
+          let nStarts = 0;
+          for (let s0 = 0; s0 + size <= LN; s0++) {
+            let free = true;
+            for (let j = 0; j < size; j++) if (closedMask & (1 << (s0 + j))) free = false;
+            if (free) openLanes[nStarts++] = s0;
+          }
+          const s0 = openLanes[Math.floor(rng() * nStarts)], flip = rng() < 0.5;
+          for (let j = 0; j < size; j++) {
+            cType[count] = T.PLOW; cLane[count] = s0 + j; cLane2[count] = s0 + j;
+            cOff[count] = (flip ? size - 1 - j : j) * CONFIG.plowStaggerMeters;
+            cColor[count] = 0; cVariant[count] = 0;
+            mask |= 1 << (s0 + j);
+            count++;
+          }
+        } else {
+        const n = Math.min(pickBlockedCount(d), freeLanes - 1);
         for (let i = 0; i < CONFIG.lanes; i++) order[i] = i;
         for (let i = CONFIG.lanes - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); const t = order[i]; order[i] = order[j]; order[j] = t; }
         let tailgaterUsed = false;
@@ -888,7 +995,7 @@ const PedroCore = (() => {
           const lane = order[i];
           if (mask & (1 << lane)) continue;
           let type = pickType(d, miles), lane2 = lane;
-          if (wantTailgater && !tailgaterUsed && i === n - 1) { type = T.TAILGATER; tailgaterUsed = true; }
+          if (wantTailgater && !tailgaterUsed && i === n - 1 && !(tgBlocked & (1 << lane))) { type = T.TAILGATER; tailgaterUsed = true; }
           if (type === T.CHANGER) {
             const dir = rng() < 0.5 ? -1 : 1;
             lane2 = lane + dir;
@@ -901,10 +1008,23 @@ const PedroCore = (() => {
           mask |= (1 << lane) | (1 << lane2);
           count++;
         }
+        }
+        // Black ice in a free middle lane (snow). It never collides, but the guaranteed lane avoids it.
+        if (snow && rng() < weightAt(CONFIG.iceChance, d)) {
+          let nIce = 0, nFree = 0;
+          for (let l = 0; l < LN; l++) if (!(mask & (1 << l))) { nFree++; if (l > 0 && l < LN - 1) openLanes[nIce++] = l; }
+          const lane = openLanes[Math.floor(rng() * nIce)], len = lerp(CONFIG.iceMeters[0], CONFIG.iceMeters[1], rng());
+          if (nIce && nFree >= 2) {
+            cType[count] = T.ICE; cLane[count] = lane; cLane2[count] = lane; cLen[count] = len;
+            cOff[count] = (rng() * 2 - 1) * CONFIG.rowStaggerSec * vA; cColor[count] = 0; cVariant[count] = 0;
+            mask |= 1 << lane;
+            count++;
+          }
+        }
         // Row span on the sigma axis
         let lo = Infinity, hi = -Infinity;
         for (let i = 0; i < count; i++) {
-          const hs = halfSpan(cType[i]);
+          const hs = spanOf(i);
           if (cOff[i] - hs < lo) lo = cOff[i] - hs;
           if (cOff[i] + hs > hi) hi = cOff[i] + hs;
         }
@@ -919,12 +1039,16 @@ const PedroCore = (() => {
         // No drive-through visuals against recent hazards
         let ghostFree = true;
         for (let i = 0; i < count && ghostFree; i++)
-          ghostFree = ghostOk(cType[i], (1 << cLane[i]) | (1 << cLane2[i]), cOff[i]);
+          if (cType[i] !== T.ICE) ghostFree = ghostOk(cType[i], (1 << cLane[i]) | (1 << cLane2[i]), cOff[i]);
         if (!ghostFree) continue;
         ok = true;
       }
-      if (!ok) { count = 0; mask = 0; fallback = true; st.fallbacks++; }
-      if (count === 0) { B = A; nOpen = 0; for (let l = 0; l < CONFIG.lanes; l++) if (Math.abs(l - gPrev) <= budget) openLanes[nOpen++] = l; }
+      if (!ok) { count = 0; mask = closedMask; fallback = true; st.fallbacks++; }
+      if (count === 0) {
+        B = A; nOpen = 0;
+        for (let l = 0; l < CONFIG.lanes; l++) if (!(mask & (1 << l)) && Math.abs(l - gPrev) <= budget) openLanes[nOpen++] = l;
+        if (!nOpen) { mask = 0; startClosure = -1; openLanes[nOpen++] = gPrev; }   // defensive: never close Pedro in
+      }
 
       const g = openLanes[Math.floor(rng() * nOpen)];
       const row = rows[st.rowCount % ROWS];
@@ -933,18 +1057,36 @@ const PedroCore = (() => {
       for (let i = 0; i < count; i++) {
         const h = allocHazard();
         if (!h) break;
-        const type = cType[i], sz = typeSize(type), vh = speedAt(cOff[i]);
+        const type = cType[i], sz = typeSize(type), vh = speedAt(cOff[i]), ice = type === T.ICE;
         h.active = true; h.id = st.nextId++; h.type = type; h.lane = cLane[i]; h.lane2 = cLane2[i];
-        h.k = typeK(type); h.sigma = cOff[i]; h.hs = halfSpan(type); h.w = sz[0]; h.l = sz[1];
+        h.k = typeK(type); h.sigma = cOff[i]; h.hs = spanOf(i); h.w = sz[0]; h.l = ice ? cLen[i] : sz[1];
+        h.hl = ice ? cLen[i] / 2 : sz[1] * CONFIG.hitboxScale / 2;      // hit half-length (collision + fairness)
         h.row = st.rowCount; h.color = cColor[i]; h.variant = cVariant[i]; h.power = 0;
         h.moveEnd = h.sigma - CONFIG.changerLeadSec * vh;
         h.moveStart = h.moveEnd - CONFIG.changerMoveSec * vh;
         h.blinkStart = h.moveStart - CONFIG.blinkerSec * vh;
         h.vis = null; h.hit = false; h.bounced = false; h.nearMissed = false; h.minDx = 99; h.entered = false; h.lateDodge = false; h.fade = 1; h.ry = 0; h.spin = 0;
-        h.bx = 0; h.by = 0; h.bvx = 0; h.bvy = 0;
+        h.bx = 0; h.by = 0; h.bvx = 0; h.bvy = 0; h.seen = false;
+        if (ice) continue;
         rType[rHead] = type; rLaneMask[rHead] = (1 << h.lane) | (1 << h.lane2); rSigma[rHead] = h.sigma;
         rHead = (rHead + 1) % RECENT; if (rCount < RECENT) rCount++;
       }
+      // Closure hazard: starts at this row's A and grows with every row committed while it lasts.
+      if (startClosure >= 0) {
+        const h = allocHazard();
+        if (h) {
+          cl.on = true; cl.lane = startClosure; cl.h = h;
+          cl.target = A + lerp(CONFIG.closureMeters[0], CONFIG.closureMeters[1], rng());
+          h.active = true; h.id = st.nextId++; h.type = T.CLOSURE; h.lane = startClosure; h.lane2 = startClosure;
+          h.k = 0; h.w = CONFIG.laneWidth * 0.9; h.row = st.rowCount; h.color = 0; h.power = 0;
+          h.variant = startClosure === 0 ? 1 : -1;                  // arrow points toward the open side
+          h.moveStart = h.moveEnd = h.blinkStart = Infinity;
+          h.vis = null; h.hit = false; h.bounced = false; h.nearMissed = true; h.minDx = 99; h.entered = false; h.lateDodge = false;
+          h.fade = 1; h.ry = 0; h.spin = 0; h.bx = 0; h.by = 0; h.bvx = 0; h.bvy = 0; h.seen = false;
+          h.lo = A;
+          setClosureEnd(h, Math.max(B, A + 2 * pHalfL + 6));
+        }
+      } else if (cl.on && cl.h && B > cl.h.lo + 2 * cl.h.hs) setClosureEnd(cl.h, B);
       // Power-up (non-blocking) in an open lane, preferring the guaranteed one
       const miles2 = A / METERS_PER_MILE;
       const rollP = rng(), rollLane = rng();
@@ -961,7 +1103,7 @@ const PedroCore = (() => {
           const kind = drawPower();
           const sz = typeSize(T.POWERUP);
           h.active = true; h.id = st.nextId++; h.type = T.POWERUP; h.lane = lane; h.lane2 = lane;
-          h.k = typeK(T.POWERUP); h.sigma = sigmaP; h.hs = halfSpan(T.POWERUP); h.w = sz[0]; h.l = sz[1];
+          h.k = typeK(T.POWERUP); h.sigma = sigmaP; h.hs = halfSpan(T.POWERUP); h.w = sz[0]; h.l = sz[1]; h.hl = sz[1] * CONFIG.hitboxScale / 2;
           h.row = st.rowCount; h.color = 0; h.variant = 0; h.power = kind;
           h.moveStart = h.moveEnd = h.blinkStart = Infinity;
           h.vis = null; h.hit = false; h.bounced = false; h.nearMissed = true; h.minDx = 99; h.entered = false; h.lateDodge = false;
@@ -985,13 +1127,14 @@ const PedroCore = (() => {
           if (mask && riskyRoll < CONFIG.coinRiskyChance) {
             let nc = 0;     // blocked lanes that have an open neighbour to bail into
             for (let l = 0; l < CONFIG.lanes; l++) {
-              if (!(mask & (1 << l))) continue;
+              if (!(mask & (1 << l)) || (closedMask & (1 << l))) continue;
               const okL = l > 0 && !(mask & (1 << (l - 1))), okR = l < CONFIG.lanes - 1 && !(mask & (1 << (l + 1)));
               if (okL || okR) openLanes[nc++] = l;
             }
             if (nc) lane = openLanes[Math.floor(laneRoll * nc)];
           }
           if (lane < 0) lane = Math.floor(laneRoll * CONFIG.lanes);
+          if (closedMask & (1 << lane)) n = 0;                       // no coins inside a closure
           const end = A - bail, trail = st.nextTrail++;
           for (let i = 0; i < n; i++) {
             const sc = end - (n - 1 - i) * spc;
@@ -1000,7 +1143,7 @@ const PedroCore = (() => {
             if (!h) break;
             const sz = typeSize(T.COIN);
             h.active = true; h.id = st.nextId++; h.type = T.COIN; h.lane = lane; h.lane2 = lane;
-            h.k = typeK(T.COIN); h.sigma = sc; h.hs = halfSpan(T.COIN); h.w = sz[0]; h.l = sz[1];
+            h.k = typeK(T.COIN); h.sigma = sc; h.hs = halfSpan(T.COIN); h.w = sz[0]; h.l = sz[1]; h.hl = sz[1] * CONFIG.hitboxScale / 2;
             h.row = st.rowCount; h.color = n; h.variant = trail; h.power = i;
             h.moveStart = h.moveEnd = h.blinkStart = Infinity;
             h.vis = null; h.hit = false; h.bounced = false; h.nearMissed = true; h.minDx = 99; h.entered = false; h.lateDodge = false;
@@ -1011,6 +1154,12 @@ const PedroCore = (() => {
 
       st.lastB = B; st.lastG = g; st.rowCount++;
       return row;
+    }
+
+    // closure blocks [lo, hi] in sigma; its cones (hit segment) are hi - lo minus Pedro's hitbox length
+    function setClosureEnd(h, hi) {
+      h.hs = (hi - h.lo) / 2; h.sigma = h.lo + h.hs;
+      h.hl = h.hs - pHalfL; h.l = 2 * h.hl;
     }
 
     // Generate rows until the horizon is covered.
@@ -1024,8 +1173,8 @@ const PedroCore = (() => {
   }
 
   return { METERS_PER_MILE, MPH_TO_MPS, mulberry32, lerp, clamp01, difficulty, speedMph, speedAt, laneX,
-    setWeek, week, weekOffset, weekMiles, weekStartDifficulty, weekTopSpeedMph, topSpeedMph,
-    T, TYPE_NAMES, typeK, typeSize, halfSpan, laneChangeSec, ghostConflict, createSpawner };
+    setWeek, week, weekOffset, weekMiles, weekStartDifficulty, weekTopSpeedMph, topSpeedMph, weatherOf, weather, closureStartFrac,
+    T, TYPE_NAMES, typeK, typeSize, halfSpan, iceHalfSpan, laneChangeSec, ghostConflict, createSpawner };
 })();
 if (typeof window !== 'undefined') window.PedroCore = PedroCore;
 </script>
@@ -1063,10 +1212,10 @@ renderer.setClearColor(FOG_COLOR, 1);
 const camera = new THREE.PerspectiveCamera(C.fovBase, 1, 0.5, C.fogFar + 40);
 
 // Sky dome: vertex-colored gradient, follows the camera; horizon matches the fog color.
-const sky = (() => {
-  const g = new THREE.SphereGeometry(C.fogFar + 20, 24, 12);
-  const top = new THREE.Color(0x10162e), mid = new THREE.Color(0x3a3f72), hor = new THREE.Color(FOG_COLOR);
-  const pos = g.attributes.position, col = new Float32Array(pos.count * 3), c = new THREE.Color();
+function paintSky(g, topHex, midHex, horHex) {
+  const top = new THREE.Color(topHex), mid = new THREE.Color(midHex), hor = new THREE.Color(horHex);
+  const pos = g.attributes.position, c = new THREE.Color();
+  const attr = g.attributes.color || new THREE.BufferAttribute(new Float32Array(pos.count * 3), 3), col = attr.array;
   for (let i = 0; i < pos.count; i++) {
     const y = pos.getY(i) / (C.fogFar + 20);
     if (y <= 0.02) c.copy(hor);
@@ -1074,14 +1223,19 @@ const sky = (() => {
     else c.copy(mid).lerp(top, Math.min(1, (y - 0.22) / 0.5));
     col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
   }
-  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  if (!g.attributes.color) g.setAttribute('color', attr); else attr.needsUpdate = true;
+}
+const sky = (() => {
+  const g = new THREE.SphereGeometry(C.fogFar + 20, 24, 12);
+  paintSky(g, 0x10162e, 0x3a3f72, FOG_COLOR);
   const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
   m.renderOrder = -1;
   scene.add(m);
   return m;
 })();
 
-scene.add(new THREE.HemisphereLight(0xc8d6ff, 0x3a2e28, 1.5));
+const hemi = new THREE.HemisphereLight(0xc8d6ff, 0x3a2e28, 1.5);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffe2c4, 1.7);
 sun.position.set(-6, 12, -8);
 scene.add(sun);
@@ -1154,12 +1308,22 @@ const SHOULDER = 2.4;
 const RAIL_X = ROAD_HALF + SHOULDER + 0.3;
 const L = C.chunkLength;
 
-function buildRoadChunkGeometry() {
+// Road palettes per weather: rain = darker wet asphalt with sheen in the wheel tracks;
+// snow = slushy grey road, white verges, cleared wheel tracks and snowbanks on the shoulders.
+const ROAD_LOOK = {
+  clear: { grass: 0x2f3b2c, shoulder: 0x3b3c40, asphalt: 0x232427 },
+  rain: { grass: 0x26362a, shoulder: 0x2e3036, asphalt: 0x16171a, tracks: 0x2a3442 },
+  snow: { grass: 0xe4eaf1, shoulder: 0xc6ced7, asphalt: 0x50555d, tracks: 0x33363c, banks: 0xf2f6fa },
+};
+function buildRoadChunkGeometry(look) {
   const p = [];
   const zc = -L / 2;
-  p.push(part(plane(80, L), 0x2f3b2c, 0, -0.06, zc));                       // grass
-  p.push(part(plane(ROAD_HALF * 2 + SHOULDER * 2, L), 0x3b3c40, 0, 0, zc));  // shoulders
-  p.push(part(plane(ROAD_HALF * 2, L), 0x232427, 0, 0.006, zc));             // asphalt (near-charcoal)
+  p.push(part(plane(80, L), look.grass, 0, -0.06, zc));                      // grass
+  p.push(part(plane(ROAD_HALF * 2 + SHOULDER * 2, L), look.shoulder, 0, 0, zc));  // shoulders
+  p.push(part(plane(ROAD_HALF * 2, L), look.asphalt, 0, 0.006, zc));         // asphalt
+  if (look.tracks) for (let i = 0; i < C.lanes; i++) for (const o of [-0.8, 0.8])
+    p.push(part(plane(0.5, L), look.tracks, laneX(i) + o, 0.011, zc));
+  if (look.banks) for (const side of [-1, 1]) p.push(part(box(1.4, 0.35, L), look.banks, side * (ROAD_HALF + SHOULDER - 0.5), 0.12, zc));
   p.push(part(plane(0.16, L), 0xe8c547, -ROAD_HALF + 0.15, 0.02, zc));        // left edge (yellow)
   p.push(part(plane(0.16, L), 0xe9e9e9, ROAD_HALF - 0.15, 0.02, zc));         // right edge (white)
   for (let i = 1; i < C.lanes; i++) {
@@ -1176,7 +1340,7 @@ function buildRoadChunkGeometry() {
 
 // Cosmetic RNG for scenery (separate from the gameplay seed)
 const sceneryRng = Core.mulberry32(0xC0FFEE);
-function buildSceneryVariant(r) {
+function buildSceneryVariant(r, snowy) {
   const p = [];
   for (const side of [-1, 1]) {
     const trees = 2 + Math.floor(r() * 4);
@@ -1185,7 +1349,9 @@ function buildSceneryVariant(r) {
       const green = [0x2e5b37, 0x3a6b3c, 0x24502f, 0x4a7240][Math.floor(r() * 4)];
       p.push(part(cyl(0.18 * s, 0.24 * s, 1.4 * s, 6), 0x5a3d2b, x, 0.7 * s, z));
       p.push(part(cyl(0, 1.3 * s, 3.2 * s, 7), green, x, 1.4 * s + 1.6 * s, z));
-      if (r() < 0.5) p.push(part(cyl(0, 1.0 * s, 2.4 * s, 7), green, x, 1.4 * s + 3.0 * s, z));
+      const tall = r() < 0.5;
+      if (tall) p.push(part(cyl(0, 1.0 * s, 2.4 * s, 7), green, x, 1.4 * s + 3.0 * s, z));
+      if (snowy) p.push(part(cyl(0, 0.75 * s, 1.3 * s, 7), 0xf4f8fb, x, 1.4 * s + (tall ? 3.75 : 2.55) * s, z));   // snow cap
     }
   }
   if (r() < 0.55) { // light pole with arm over the shoulder
@@ -1206,18 +1372,24 @@ function buildSceneryVariant(r) {
   return merge(p);
 }
 
-const roadGeo = buildRoadChunkGeometry();
-const sceneryVariants = [];
-for (let i = 0; i < 8; i++) sceneryVariants.push(buildSceneryVariant(sceneryRng));
+const ROAD_GEOS = { clear: buildRoadChunkGeometry(ROAD_LOOK.clear), rain: buildRoadChunkGeometry(ROAD_LOOK.rain), snow: buildRoadChunkGeometry(ROAD_LOOK.snow) };
+const SCENERY = { clear: [], snow: [] };
+for (let i = 0; i < 8; i++) SCENERY.clear.push(buildSceneryVariant(sceneryRng));
+for (let i = 0; i < 8; i++) SCENERY.snow.push(buildSceneryVariant(sceneryRng, true));
+SCENERY.rain = SCENERY.clear;
+let sceneryVariants = SCENERY.clear;
+const roadGeo = ROAD_GEOS.clear;
 
 const chunks = [];
 const CHUNK_BEHIND = 30; // chunk fully behind camera once its far edge passes this z
 for (let i = 0; i < C.chunkCount; i++) {
   const g = new THREE.Group();
-  g.add(new THREE.Mesh(roadGeo, vcMat));
+  const rd = new THREE.Mesh(roadGeo, vcMat);
+  g.add(rd);
   const sc = new THREE.Mesh(sceneryVariants[i % sceneryVariants.length], vcMat);
   g.add(sc);
   g.userData.scenery = sc;
+  g.userData.road = rd;
   g.position.z = CHUNK_BEHIND - i * L;
   scene.add(g);
   chunks.push(g);
@@ -1230,6 +1402,92 @@ function scrollRoad(d) {
       ch.position.z -= C.chunkCount * L;
       ch.userData.scenery.geometry = sceneryVariants[Math.floor(sceneryRng() * sceneryVariants.length)];
     }
+  }
+}
+
+// ---------- Weather: sky, fog, light, road, scenery, rain/snow particles ----------
+const WEATHER_LOOK = {
+  clear: { fog: FOG_COLOR, top: 0x10162e, mid: 0x3a3f72, hemi: 1.5, sun: 1.7, fill: 0.55 },
+  rain: { fog: 0x56606e, top: 0x141922, mid: 0x2f3746, hemi: 1.2, sun: 0.6, fill: 0.5 },
+  snow: { fog: 0xbcc6d1, top: 0x4f5b72, mid: 0x8692a7, hemi: 1.75, sun: 0.9, fill: 0.6 },
+};
+const WEATHER_INFO = {
+  clear: { icon: '☀️', name: 'Clear', banner: 'Clear skies' },
+  rain: { icon: '🌧', name: 'Rain', banner: 'Rain', note: "Can't see a thing. Traffic shows up late." },
+  snow: { icon: '❄️', name: 'Snow', banner: 'Snow', note: 'Plows and black ice. Steer onto ice and you slide.' },
+};
+// Particles live in a box around the camera and wrap; positions update in place (no allocation).
+const RAIN_N = 650, SNOW_N = 800, PBOX = { x: 16, y: 14, z0: -75, z1: 8 };
+const rain = (() => {
+  const pos = new Float32Array(RAIN_N * 6), st = new Float32Array(RAIN_N * 3);
+  for (let i = 0; i < RAIN_N; i++) {
+    st[i * 3] = (Math.random() * 2 - 1) * PBOX.x; st[i * 3 + 1] = Math.random() * PBOX.y; st[i * 3 + 2] = PBOX.z0 + Math.random() * (PBOX.z1 - PBOX.z0);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const m = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xb4c4da, transparent: true, opacity: 0.5, depthWrite: false }));
+  m.frustumCulled = false; m.visible = false;
+  scene.add(m);
+  return { m, pos, st, attr: g.attributes.position };
+})();
+const snow = (() => {
+  const pos = new Float32Array(SNOW_N * 3), ph = new Float32Array(SNOW_N);
+  for (let i = 0; i < SNOW_N; i++) {
+    pos[i * 3] = (Math.random() * 2 - 1) * PBOX.x; pos[i * 3 + 1] = Math.random() * PBOX.y; pos[i * 3 + 2] = PBOX.z0 + Math.random() * (PBOX.z1 - PBOX.z0);
+    ph[i] = Math.random() * 6.28;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const m = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 0.22, map: makeGlowTexture(), transparent: true, opacity: 0.95, depthWrite: false }));
+  m.frustumCulled = false; m.visible = false;
+  scene.add(m);
+  return { m, pos, ph, attr: g.attributes.position };
+})();
+let weatherKind = 'clear';
+function setWeather(kind) {
+  if (!WEATHER_LOOK[kind]) kind = 'clear';
+  weatherKind = kind;
+  const look = WEATHER_LOOK[kind], vis = C.weather[kind];
+  scene.fog.color.setHex(look.fog); scene.fog.near = vis.fogNear; scene.fog.far = vis.fogFar;
+  renderer.setClearColor(look.fog, 1);
+  paintSky(sky.geometry, look.top, look.mid, look.fog);
+  hemi.intensity = look.hemi; sun.intensity = look.sun; fill.intensity = look.fill;
+  sceneryVariants = SCENERY[kind];
+  for (let i = 0; i < chunks.length; i++) {
+    chunks[i].userData.road.geometry = ROAD_GEOS[kind];
+    chunks[i].userData.scenery.geometry = sceneryVariants[i % sceneryVariants.length];
+  }
+  rain.m.visible = kind === 'rain';
+  snow.m.visible = kind === 'snow';
+}
+// v = forward speed (m/s): drops/flakes stream toward the camera faster as Pedro speeds up
+function updateWeather(dt, v) {
+  const span = PBOX.z1 - PBOX.z0, cx = camera.position.x;
+  if (rain.m.visible) {
+    const st = rain.st, p = rain.pos, dz = (v * 0.3 + 3) * dt, dy = 22 * dt, sl = 0.012 * v + 0.25;
+    for (let i = 0; i < RAIN_N; i++) {
+      let y = st[i * 3 + 1] - dy, z = st[i * 3 + 2] + dz;
+      if (y < 0) y += PBOX.y;
+      if (z > PBOX.z1) z -= span;
+      st[i * 3 + 1] = y; st[i * 3 + 2] = z;
+      const x = st[i * 3] + cx, o = i * 6;
+      p[o] = x; p[o + 1] = y; p[o + 2] = z;
+      p[o + 3] = x; p[o + 4] = y + 0.9; p[o + 5] = z - sl;
+    }
+    rain.attr.needsUpdate = true;
+  }
+  if (snow.m.visible) {
+    const p = snow.pos, ph = snow.ph, dz = v * 0.3 * dt, dy = 1.8 * dt, t = game.time;
+    for (let i = 0; i < SNOW_N; i++) {
+      const o = i * 3;
+      let y = p[o + 1] - dy, z = p[o + 2] + dz;
+      if (y < 0) y += PBOX.y;
+      if (z > PBOX.z1) z -= span;
+      p[o] += Math.sin(t * 1.3 + ph[i]) * 0.9 * dt;
+      if (p[o] > PBOX.x + cx) p[o] -= 2 * PBOX.x; else if (p[o] < cx - PBOX.x) p[o] += 2 * PBOX.x;
+      p[o + 1] = y; p[o + 2] = z;
+    }
+    snow.attr.needsUpdate = true;
   }
 }
 
@@ -1503,6 +1761,149 @@ const pools = {
     return { root, body, mat: null, lights: null, blinkL: null, blinkR: null, pool: null };
   }),
 };
+// Snowplow (front = -z): angled orange blade, yellow cab, grey dump body, amber beacons, snow thrown aside
+function buildPlow() {
+  const p = [];
+  p.push(part(plane(3.2, 11.4), 0x0b0b0d, 0, 0.03, 0));
+  p.push(part(box(2.2, 0.4, 9.6), 0x1c1d20, 0, 0.6, 0.3));
+  p.push(part(box(2.5, 2.4, 2.6), 0xf2a900, 0, 1.6, -3.0));                          // cab
+  p.push(part(box(2.2, 0.8, 0.06), 0x1a2030, 0, 2.2, -4.32));                         // windshield
+  p.push(part(box(2.5, 1.9, 5.8), 0xff8a00, 0, 1.75, 1.8));                           // dump body (municipal orange)
+  p.push(part(box(2.52, 0.14, 5.82), 0x5b4a30, 0, 2.72, 1.8));
+  // rear: yellow/black chevron tailgate, the thing you see from behind
+  p.push(part(box(2.3, 1.5, 0.05), 0x161616, 0, 1.6, 4.72));
+  for (let i = -2; i <= 2; i++) p.push(part(box(0.26, 1.4, 0.06), 0xffd21a, i * 0.42, 1.6, 4.74, 0, 0, i < 0 ? 0.6 : -0.6));
+  p.push(part(box(2.52, 0.3, 0.08), 0x8d939b, 0, 0.82, 4.76));
+  p.push(part(box(3.1, 1.1, 0.28), 0xff7a00, 0, 0.6, -4.95, 0, 0.32, 0));              // blade
+  p.push(part(box(3.12, 0.16, 0.3), 0x1a1a1a, 0, 0.12, -4.95, 0, 0.32, 0));
+  p.push(part(box(1.3, 0.55, 2.2), 0xeef3f8, 1.9, 0.28, -4.4, 0, 0.3, 0));             // snow thrown off the blade
+  for (const z of [-3.0, 2.0, 3.6]) for (const x of [-1.1, 1.1])
+    p.push(part(cyl(0.52, 0.52, 0.38, 10), 0x111214, x, 0.52, z, 0, 0, Math.PI / 2));
+  return merge(p);
+}
+function buildPlowLights() {
+  const p = [];
+  for (const x of [-0.9, 0.9]) { p.push(part(box(0.3, 0.22, 0.05), 0xff1428, x, 0.95, 4.73)); p.push(part(box(0.36, 0.2, 0.05), 0xfff6dc, x, 1.2, -4.34)); }
+  return merge(p);
+}
+const plowBeaconGeo = merge([part(box(0.34, 0.24, 0.34), 0xffa31a, -0.75, 2.92, -3.0), part(box(0.34, 0.24, 0.34), 0xffa31a, 0.75, 2.92, -3.0),
+  part(box(2.0, 0.26, 0.3), 0xffa31a, 0, 2.95, 4.5)]);   // rear light bar
+const plowGeo = buildPlow(), plowLightsGeo = buildPlowLights();
+pools.plow = makePool(6, () => {
+  const it = vehicleItem(plowGeo, plowLightsGeo, false);
+  it.beacon = new THREE.Mesh(plowBeaconGeo, blinkerMat);
+  it.root.add(it.beacon);
+  it.update = (h) => { it.beacon.visible = (game.time * 4 + h.id) % 2 < 1; };
+  return it;
+});
+// Road closure: arrow board trailer at the near end (faces Pedro) + an orange diamond sign on the shoulder 60 m earlier.
+// The cones and barrels along the closed lane are instanced (see updateHazards).
+function buildArrowBoard() {
+  const p = [];
+  p.push(part(plane(2.6, 3.0), 0x0b0b0d, 0, 0.03, 0));
+  p.push(part(box(2.0, 0.5, 2.4), 0xf28c00, 0, 0.7, 0));
+  p.push(part(box(0.16, 1.5, 0.16), 0x55595f, 0, 1.6, -0.3));
+  p.push(part(box(2.6, 1.6, 0.14), 0x101012, 0, 2.6, -0.3));
+  for (const x of [-0.85, 0.85]) p.push(part(cyl(0.34, 0.34, 0.26, 10), 0x111214, x, 0.34, 0.2, 0, 0, Math.PI / 2));
+  for (let i = 0; i < 5; i++) p.push(part(box(0.32, 0.08, 0.05), i % 2 ? 0xf4f4f4 : 0xff5a00, -0.8 + i * 0.4, 0.55, 1.22));   // reflective stripe
+  return merge(p);
+}
+function buildArrowLamps(dir) {
+  const p = [], lamp = (x, y) => p.push(part(box(0.15, 0.15, 0.05), 0xffb21a, dir * x, 2.6 + y, -0.21));
+  for (let i = 0; i < 5; i++) lamp(-0.95 + i * 0.3, 0);
+  for (const [x, y] of [[0.55, 0], [0.4, 0.2], [0.4, -0.2], [0.25, 0.4], [0.25, -0.4]]) lamp(x, y);
+  return merge(p);
+}
+function buildWorkSign() {
+  return merge([
+    part(box(0.12, 2.0, 0.12), 0x8a9098, 0, 1.0, 0),
+    part(box(1.4, 1.4, 0.06), 0x111111, 0, 2.4, 0.02, 0, 0, Math.PI / 4),
+    part(box(1.22, 1.22, 0.07), 0xff8c1a, 0, 2.4, 0.04, 0, 0, Math.PI / 4),
+    part(box(0.12, 0.5, 0.08), 0x111111, 0, 2.48, 0.08),
+    part(box(0.12, 0.12, 0.08), 0x111111, 0, 2.12, 0.08),
+  ]);
+}
+const arrowBoardGeo = buildArrowBoard(), arrowLampGeos = [buildArrowLamps(-1), buildArrowLamps(1)], workSignGeo = buildWorkSign();
+pools.closure = makePool(3, () => {
+  const root = new THREE.Group();
+  const board = new THREE.Mesh(arrowBoardGeo, vcMat), lamps = new THREE.Mesh(arrowLampGeos[1], glowMat);
+  const sign = new THREE.Mesh(workSignGeo, vcMat);
+  root.add(board, lamps, sign);
+  const it = { root, body: board, mat: null, lights: null, blinkL: null, blinkR: null, pool: null };
+  it.setup = (h) => {
+    lamps.geometry = arrowLampGeos[h.variant > 0 ? 1 : 0];
+    sign.position.x = (h.lane === 0 ? -1 : 1) * (ROAD_HALF + 1.5) - laneX(h.lane);
+  };
+  it.update = (h) => {
+    board.position.z = lamps.position.z = h.hl;           // near end of the closed stretch
+    sign.position.z = h.hl + 60;
+    lamps.visible = (game.time * 3) % 2 < 1.3;
+  };
+  return it;
+});
+const iceMat = new THREE.MeshBasicMaterial({ color: 0x8fd3ff, transparent: true, opacity: 0.45, depthWrite: false });
+const iceGeo = new THREE.PlaneGeometry(C.laneWidth * 0.86, 1).rotateX(-Math.PI / 2);
+pools.ice = makePool(10, () => {
+  const root = new THREE.Group();
+  const patch = new THREE.Mesh(iceGeo, iceMat);
+  patch.position.y = 0.014; patch.renderOrder = 1;
+  root.add(patch);
+  const glints = [];
+  for (let i = 0; i < 4; i++) {
+    const g = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.7), new THREE.MeshBasicMaterial({ map: makeGlowTexture(), color: 0xe8f6ff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+    g.position.set((i % 2 ? 1 : -1) * (0.5 + i * 0.2), 0.12, 0);
+    root.add(g); glints.push(g);
+  }
+  const it = { root, body: patch, mat: null, lights: null, blinkL: null, blinkR: null, pool: null };
+  it.setup = (h) => { patch.scale.z = h.l; for (let i = 0; i < 4; i++) glints[i].position.z = (i / 3 - 0.5) * h.l * 0.8; };
+  it.update = (h) => {
+    for (let i = 0; i < 4; i++) { const s = 0.4 + 0.6 * Math.max(0, Math.sin(game.time * 5 + i * 1.9 + h.id)); glints[i].scale.setScalar(s); glints[i].quaternion.copy(camera.quaternion); }
+  };
+  return it;
+});
+// Instanced cones (lane line + taper) and barrels (in the closed lane): one draw call each
+const CONE_MAX = 140, BARREL_MAX = 24;
+const coneMesh = (() => {
+  const g = merge([part(box(0.5, 0.06, 0.5), 0xd2560c, 0, 0.03, 0), part(cyl(0.05, 0.24, 0.78, 8), 0xff6a00, 0, 0.45, 0), part(cyl(0.12, 0.16, 0.14, 8), 0xf4f4f4, 0, 0.52, 0)]);
+  const m = new THREE.InstancedMesh(g, vcMat, CONE_MAX);
+  m.frustumCulled = false; m.count = 0; scene.add(m);
+  return m;
+})();
+const barrelMesh = (() => {
+  const g = merge([part(cyl(0.34, 0.36, 0.95, 10), 0xff6a00, 0, 0.48, 0), part(cyl(0.355, 0.355, 0.14, 10), 0xf4f4f4, 0, 0.62, 0),
+    part(cyl(0.365, 0.365, 0.14, 10), 0xf4f4f4, 0, 0.3, 0), part(cyl(0.44, 0.44, 0.08, 10), 0x1a1a1a, 0, 0.04, 0)]);
+  const m = new THREE.InstancedMesh(g, vcMat, BARREL_MAX);
+  m.frustumCulled = false; m.count = 0; scene.add(m);
+  return m;
+})();
+const _id = new THREE.Quaternion(), _one = new THREE.Vector3(1, 1, 1), _cp = new THREE.Vector3(), _cm = new THREE.Matrix4();
+let coneCount = 0, barrelCount = 0;
+function drawClosure(h, sig) {
+  const o0 = h.sigma - h.hl, o1 = h.sigma + h.hl, far = scene.fog.far + 10;
+  const inner = laneX(h.lane) + h.variant * C.laneWidth / 2, outer = laneX(h.lane) - h.variant * C.laneWidth * 0.42;
+  // taper: from the outer edge behind the board, angling in to the lane line
+  for (let i = 0; i < 4 && coneCount < CONE_MAX; i++) {
+    const s = o0 + 3 + i * 6, z = -(s - sig);
+    if (z > 15 || z < -far) continue;
+    coneMesh.setMatrixAt(coneCount++, _cm.compose(_cp.set(lerp(outer, inner, (i + 1) / 4), 0, z), _id, _one));
+  }
+  const i0 = Math.max(4, Math.ceil((sig - 15 - o0 - 3) / 6));
+  for (let i = i0; coneCount < CONE_MAX; i++) {
+    const s = o0 + 3 + i * 6;
+    if (s > o1) break;
+    const z = -(s - sig);
+    if (z < -far) break;
+    coneMesh.setMatrixAt(coneCount++, _cm.compose(_cp.set(inner, 0, z), _id, _one));
+  }
+  const j0 = Math.max(1, Math.ceil((sig - 15 - o0) / 32));
+  for (let j = j0; barrelCount < BARREL_MAX; j++) {
+    const s = o0 + j * 32;
+    if (s > o1 - 4) break;
+    const z = -(s - sig);
+    if (z < -far) break;
+    barrelMesh.setMatrixAt(barrelCount++, _cm.compose(_cp.set(laneX(h.lane), 0, z), _id, _one));
+  }
+}
 // Power-up tokens
 const POWER = { COVERAGE: 0, BRAKE: 1, DETAIL: 2, DONUT: 3, CHOURICO: 4 };
 const POWER_INFO = [
@@ -1613,6 +2014,9 @@ function collectCoin(h) {
 
 function poolFor(type) {
   if (type === T.TRUCK) return pools.truck;
+  if (type === T.PLOW) return pools.plow;
+  if (type === T.CLOSURE) return pools.closure;
+  if (type === T.ICE) return pools.ice;
   if (type === T.DEBRIS) return pools.debris;
   if (type === T.POWERUP) return pools.power || null;
   return pools.sedan;
@@ -1623,7 +2027,7 @@ function bindVisual(h) {
   if (!it) return null;
   it.pool = pool;
   if (it.mat) {
-    it.mat.color.setHex(h.type === T.TAILGATER ? TAILGATER_COLOR : TRAFFIC_COLORS[h.color]);
+    it.mat.color.setHex(h.type === T.TAILGATER ? TAILGATER_COLOR : h.type === T.PLOW ? 0xffffff : TRAFFIC_COLORS[h.color]);
     if (it.mat.transparent) { it.mat.transparent = false; it.mat.opacity = 1; it.mat.needsUpdate = true; }
   }
   if (it.lights) it.lights.visible = true;
@@ -1640,7 +2044,7 @@ function releaseHazard(h) {
   h.active = false;
 }
 
-function startLaneChange(dir) {
+function startLaneChange(dir, slide) {
   const target = player.lane + dir;
   if (target < 0 || target >= C.lanes) { player.bump = dir; player.bumpT = 0.16; return; }
   player.fromX = player.x;
@@ -1648,6 +2052,23 @@ function startLaneChange(dir) {
   player.lane = target;
   player.dir = dir;
   player.t = 0;
+  player.sliding = !!slide; player.iceHit = false;
+  player.dur = slide ? C.iceSlideMs : C.laneChangeMs;
+}
+// Is Pedro's car over a black-ice patch in `lane` right now?
+function overIce(lane) {
+  const sp = game.spawner;
+  if (!sp) return false;
+  for (const h of sp.hazards) if (h.active && h.type === T.ICE && h.lane === lane && Math.abs(h.sigma - game.sigma) < h.hs) return true;
+  return false;
+}
+function iceSlide() {
+  player.queued = 0;
+  startLaneChange(player.dir, true);
+  game.slides++;
+  floatText('BLACK ICE!', '#bfe6ff');
+  say(pickLine(ICE_LINES, 'ice'), true);
+  Sfx.skid();
 }
 function requestLane(dir) {
   if (game.state !== 'play') return;
@@ -1656,12 +2077,19 @@ function requestLane(dir) {
 }
 function updatePlayer(realDt) {
   if (player.t < 1) {
-    player.t = Math.min(1, player.t + (realDt * 1000) / C.laneChangeMs);
+    player.t = Math.min(1, player.t + (realDt * 1000) / (player.dur || C.laneChangeMs));
     player.x = lerp(player.fromX, laneX(player.lane), easeInOut(player.t));
-    if (player.t >= 1 && player.queued) { const q = player.queued; player.queued = 0; startLaneChange(q); }
+    // steering onto black ice carries Pedro one more lane in the same direction
+    if (!player.sliding && !player.iceHit && game.state === 'play' && overIce(player.lane)) player.iceHit = true;
+    if (player.t >= 1 && player.iceHit) iceSlide();
+    else if (player.t >= 1 && player.queued) { const q = player.queued; player.queued = 0; startLaneChange(q); }
   }
   let yaw = 0, roll = 0;
-  if (player.t < 1) { const s = Math.sin(player.t * Math.PI); yaw = -player.dir * 0.16 * s; roll = player.dir * 0.05 * s; }
+  if (player.t < 1) {
+    const s = Math.sin(player.t * Math.PI);
+    if (player.sliding) { yaw = player.dir * 0.5 * Math.sin(player.t * Math.PI * 2); roll = player.dir * 0.08 * s; }   // fishtail
+    else { yaw = -player.dir * 0.16 * s; roll = player.dir * 0.05 * s; }
+  }
   let bx = 0;
   if (player.bumpT > 0) { player.bumpT -= realDt; bx = player.bump * Math.sin((player.bumpT / 0.16) * Math.PI) * 0.25; }
   player.group.position.set(player.x + bx, 0, 0);
@@ -1999,6 +2427,7 @@ const Sfx = (() => {
       noiseHit(t + 0.25, 0.25, 'bandpass', 1800, 900, 0.2);
     },
     thud() { if (!live()) return; const t = ctx.currentTime; tone(t, 'sine', 140, 50, 0.22, 0.7); noiseHit(t, 0.18, 'lowpass', 1500, 300, 0.4); },
+    skid() { if (!live()) return; const t = ctx.currentTime; noiseHit(t, 0.6, 'bandpass', 3200, 1100, 0.5); tone(t, 'sawtooth', 620, 380, 0.45, 0.04); },
     chime() {
       if (!live()) return;
       const t = ctx.currentTime;
@@ -2166,7 +2595,8 @@ const game = {
   spin: 0, slide: 0,
   tgCount: 0, tgLane: new Int8Array(6), tgAhead: new Float32Array(6),
   nearMisses: 0,
-  week: 1, weekMiles: C.weekBaseMiles, goalSigma: 0, dropped: false,
+  week: 1, weekMiles: C.weekBaseMiles, goalSigma: 0, dropped: false, weather: 'clear',
+  slides: 0, saidRoadwork: false, saidPlow: false,
   result: '',            // 'wrecked' | 'complete' once the run is over
   coins: 0, trail: 0, trailGot: 0,
   shield: false,
@@ -2189,6 +2619,9 @@ function resetRun() {
   if (URL_SEED !== null) urlSeedUsed = true;
   game.week = Core.setWeek(game.week);
   game.weekMiles = Core.weekMiles(game.week);
+  game.weather = Core.weather();
+  setWeather(game.weather);
+  game.slides = 0; game.saidRoadwork = false; game.saidPlow = false;
   game.goalSigma = game.weekMiles * Core.METERS_PER_MILE;
   const start = Math.min(START_SIGMA, game.goalSigma - 100);    // ?debug&start=N stays inside the week
   game.spawner = Core.createSpawner(game.seed, C.startLane, start, game.goalSigma);
@@ -2206,6 +2639,7 @@ function resetRun() {
   signs.reset(start);
   ui.banner.classList.add('hidden');
   player.lane = C.startLane; player.x = player.fromX = laneX(C.startLane); player.t = 1; player.queued = 0; player.bumpT = 0;
+  player.sliding = false; player.iceHit = false; player.dur = C.laneChangeMs;
   player.group.rotation.set(0, 0, 0);
   player.group.visible = true;
 }
@@ -2222,7 +2656,9 @@ function startRun() {
   ui.lives.classList.remove('hidden');
   hudCache.lives = -1;
   resetMirror();
-  hudCache.score = hudCache.miles = hudCache.mph = -1; hudCache.past = -1; hudCache.coins = -1; hudCache.effect = -2; hudCache.shield = null; hudCache.bar = -1;
+  hudCache.score = hudCache.miles = hudCache.mph = -1; hudCache.past = -1;
+  const wi = WEATHER_INFO[game.weather];
+  showBanner('Week ' + game.week, wi.icon + ' ' + wi.banner, gameNight(game.week) + (wi.note ? ' · ' + wi.note : game.week >= C.closureMinWeek ? ' · Road work later on' : '')); hudCache.coins = -1; hudCache.effect = -2; hudCache.shield = null; hudCache.bar = -1;
 }
 
 function crash(h, hx) {
@@ -2232,8 +2668,8 @@ function crash(h, hx) {
   const side = hx > player.x ? -1 : 1;              // spin away from the impact
   game.spin = side * (7 + Math.random() * 3);
   game.slide = side * 5;
-  player.t = 1; player.queued = 0;
-  h.bounced = true; h.bvx = -side * 6; h.bvy = 5; h.spin = -side * 4;
+  player.t = 1; player.queued = 0; player.sliding = false; player.iceHit = false;
+  if (h.type !== T.CLOSURE) { h.bounced = true; h.bvx = -side * 6; h.bvy = 5; h.spin = -side * 4; }
   game.lives = 0;
   setDamage(3);
   Sfx.crunch();
@@ -2323,7 +2759,7 @@ const ui = {
   score: $('hudScoreVal'), miles: $('hudMilesVal'), milesLabel: $('hudMilesLabel'), speed: $('hudSpeedVal'),
   titleBest: $('titleBest'), debug: $('debugPanel'),
   overSub: $('overSub'), overBonus: $('overBonus'), overCta: $('overCta'),
-  weekName: $('weekName'), weekSub: $('weekSub'), weekPrev: $('weekPrev'), weekNext: $('weekNext'),
+  weekName: $('weekName'), weekSub: $('weekSub'), weekNight: $('weekNight'), weekPrev: $('weekPrev'), weekNext: $('weekNext'),
   help: $('helpScreen'),
 };
 ui.titleBest.textContent = 'Best: ' + bestScore.toLocaleString();
@@ -2720,7 +3156,10 @@ $('boardClose').addEventListener('click', (e) => { e.stopPropagation(); closeBoa
 function refreshWeekPick() {
   const w = progress.sel;
   ui.weekName.textContent = 'WEEK ' + w;
-  ui.weekSub.textContent = Core.weekMiles(w) + ' mi · ' + gameNight(w);
+  const wx = Core.weatherOf(w), wi = WEATHER_INFO[wx];
+  ui.weekSub.textContent = Core.weekMiles(w) + ' mi · ' + wi.icon + ' ' + wi.name;
+  ui.weekNight.textContent = gameNight(w);
+  if (game.state === 'title') setWeather(wx);          // the title screen previews the week's weather
   ui.weekPrev.disabled = w <= 1;
   ui.weekNext.disabled = w >= progress.max;
   ui.weekNext.setAttribute('aria-label', w >= progress.max ? 'Week ' + (w + 1) + ' is locked' : 'Next week');
@@ -2780,7 +3219,7 @@ function updateHazards(dtGame, realDt) {
   const sig = game.sigma, hsc = C.hitboxScale;
   const pHalfW = C.playerSize[0] * hsc / 2, pHalfL = C.playerSize[1] * hsc / 2;
   let tg = 0;
-  coinCount = 0;
+  coinCount = 0; coneCount = 0; barrelCount = 0;
   _coinQ.setFromEuler(_coinE.set(0, game.time * 4, 0));
   const blinkOn = (game.time * 6) % 2 < 1;
   const list = sp.hazards;
@@ -2795,8 +3234,15 @@ function updateHazards(dtGame, realDt) {
       } else if (ahead < 0 && ahead > -C.tailgaterWarnMeters && !h.bounced && tg < game.tgLane.length) {
         game.tgLane[tg] = h.lane; game.tgAhead[tg] = ahead; tg++;
       }
-    } else if (ahead < -C.despawnBehindMeters) { releaseHazard(h); continue; }
+    } else if (ahead + (h.type === T.CLOSURE || h.type === T.ICE ? h.hl : 0) < -C.despawnBehindMeters) { releaseHazard(h); continue; }
     if (h.bounced && Math.abs(h.bx) > 30) { releaseHazard(h); continue; }
+    // First road closure / plow train of the drive: Pedro reacts once it comes into view
+    if (!h.seen && (h.type === T.CLOSURE ? ahead - h.hl : ahead) < scene.fog.far * 0.85) {
+      h.seen = true;
+      if (game.state === 'play' && h.type === T.CLOSURE && !game.saidRoadwork) { game.saidRoadwork = true; say(pickLine(ROADWORK_LINES, 'road')); }
+      if (game.state === 'play' && h.type === T.PLOW && !game.saidPlow) { game.saidPlow = true; say(pickLine(PLOW_LINES, 'plow')); }
+    }
+    if (h.type === T.CLOSURE) drawClosure(h, sig);
 
     if (h.type === T.COIN) {
       const zc = -ahead, xc = laneX(h.lane);
@@ -2842,8 +3288,9 @@ function updateHazards(dtGame, realDt) {
       if (game.state === 'play' && Math.abs(z) < pHalfL + 1.0 && Math.abs(x - player.x) < pHalfW + 1.0) collectPower(h);
       continue;
     }
+    if (h.type === T.ICE) continue;                       // never collides (see overIce / iceSlide)
     if (game.state === 'play' && !h.hit && !h.bounced &&
-        Math.abs(z) < pHalfL + h.l * hsc / 2 && Math.abs(x - player.x) < pHalfW + h.w * hsc / 2) {
+        Math.abs(z) < pHalfL + h.hl && Math.abs(x - player.x) < pHalfW + h.w * hsc / 2) {
       onHit(h, x);
       if (!h.active) continue;
     }
@@ -2869,6 +3316,8 @@ function updateHazards(dtGame, realDt) {
   game.tgCount = tg;
   coinMesh.count = coinCount;
   coinMesh.instanceMatrix.needsUpdate = true;
+  coneMesh.count = coneCount; coneMesh.instanceMatrix.needsUpdate = true;
+  barrelMesh.count = barrelCount; barrelMesh.instanceMatrix.needsUpdate = true;
 }
 
 function bounceAside(h, hx) {
@@ -2883,6 +3332,14 @@ function bounceAside(h, hx) {
   h.spin = side * (heavy ? 0.8 : 3 + Math.random() * 3);
 }
 function onHit(h, hx) {
+  if (h.type === T.CLOSURE) {
+    // a closed lane is a wall: Fresh Detail / grace drive through the cones, otherwise it costs a link
+    if (game.effect === POWER.DETAIL || game.invulnT > 0) return;
+    if (game.shield) { game.shield = false; game.invulnT = C.shieldGraceSec; floatText('COVERED! CLAIM FILED', '#8fd0ff'); say(pickLine(HIT_LINES, 'hit'), true); Sfx.thud(); return; }
+    if (game.lives > 1) { loseLife(h, hx); return; }
+    crash(h, hx);
+    return;
+  }
   if (game.effect === POWER.DETAIL) {
     bounceAside(h, hx);
     const pts = C.plowPoints * scoreMultiplier();
@@ -2910,7 +3367,7 @@ function loseLife(h, hx) {
   game.lives--;
   game.hits++;
   setDamage(C.lives - game.lives);
-  bounceAside(h, hx);
+  if (h.type !== T.CLOSURE) bounceAside(h, hx);
   game.invulnT = C.hitGraceSec;
   game.shakeT = 0.45;
   floatText(game.lives === 1 ? 'LAST LINK!' : '-1 LINK', '#ff6a50');
@@ -2928,7 +3385,7 @@ function pickLine(list, key) {
   lastPick[key] = i;
   return list[i];
 }
-let speechTimer = 0, speechAt = 0;
+let speechTimer = 0, speechAt = -Infinity;
 function say(text, force) {
   const now = performance.now();
   // Minor bumps never talk over a line that's still on screen; life-loss lines (force) always show.
@@ -3205,6 +3662,7 @@ function update(realDt) {
     scrollRoad(realDt * 22);
     updatePlayer(realDt);
   }
+  updateWeather(realDt, game.state === 'title' ? 22 : game.state === 'over' ? 0 : game.mph * speedMult() * worldTimeScale() * Core.MPH_TO_MPS);
   const speedFrac = Math.min(1.3, (game.mph * speedMult() - C.startSpeedMph) / (C.maxSpeedMph - C.startSpeedMph));
   updateCamera(realDt, game.state === 'play' || game.state === 'crashing' || game.state === 'finishing' ? speedFrac : 0);
   if (DEBUG) { updateDebugStrips(); updateDebug(miles); }
@@ -3254,6 +3712,8 @@ window.__pedro = {
       rows: game.spawner ? game.spawner.rowCount : 0, roast: game.lastRoast || '',
       nearMisses: game.nearMisses, coins: game.coins, musicStyle: Sfx.style(),
       hudLabel: ui.milesLabel.textContent, hudMiles: ui.miles.textContent,
+      weather: game.weather, fogFar: scene.fog.far, rainOn: rain.m.visible, snowOn: snow.m.visible, slides: game.slides, sliding: !!player.sliding,
+      cones: coneMesh.count, closures: game.spawner ? game.spawner.hazards.filter((x) => x.active && x.type === Core.T.CLOSURE).length : 0,
       week: game.week, weekMiles: game.weekMiles, result: game.result, dropped: game.dropped, weekMax: progress.max, weekSel: progress.sel,
       topMph: Core.topSpeedMph(), difficulty: Core.difficulty(game.sigma / Core.METERS_PER_MILE),
       overTitle: ui.overTitle.textContent, overSub: ui.overSub.textContent, overCta: ui.overCta.textContent, help: helpOpen,
@@ -3279,7 +3739,7 @@ window.__pedro = {
       const h = game.spawner.hazards.find((x) => !x.active);
       if (!h) break;
       Object.assign(h, { active: true, id: 980000 + i, type: Core.T.COIN, lane, lane2: lane, k, sigma: game.sigma + (ahead + i * 7) / (1 - k),
-        hs: Core.halfSpan(Core.T.COIN), w: 1, l: 1, row: -1, color: n, variant: trail, power: i, vis: null, hit: false, bounced: false,
+        hs: Core.halfSpan(Core.T.COIN), w: 1, l: 1, hl: C.hitboxScale / 2, row: -1, color: n, variant: trail, power: i, vis: null, hit: false, bounced: false,
         nearMissed: true, moveStart: Infinity, moveEnd: Infinity, blinkStart: Infinity, fade: 1, bx: 0, by: 0 });
       made++;
     }
@@ -3294,12 +3754,54 @@ window.__pedro = {
       if (!h) break;
       const k = Core.typeK(Core.T.TAILGATER), sz = Core.typeSize(Core.T.TAILGATER);
       Object.assign(h, { active: true, id: 900000 + made, type: Core.T.TAILGATER, lane, lane2: lane, k, sigma: game.sigma + dist / (k - 1),
-        hs: Core.halfSpan(Core.T.TAILGATER), w: sz[0], l: sz[1], row: -1, color: 0, variant: 0, power: 0,
+        hs: Core.halfSpan(Core.T.TAILGATER), w: sz[0], l: sz[1], hl: sz[1] * C.hitboxScale / 2, row: -1, color: 0, variant: 0, power: 0,
         moveStart: Infinity, moveEnd: Infinity, blinkStart: Infinity, vis: null, hit: false, bounced: false, nearMissed: false,
         minDx: 99, entered: false, lateDodge: false, fade: 1, ry: 0, spin: 0, bx: 0, by: 0, bvx: 0, bvy: 0 });
       made++;
     }
     return made;
+  },
+  // ?debug only: a closed lane starting `ahead` m in front of Pedro, `len` m long
+  spawnClosure(lane, ahead, len) {
+    if (!DEBUG || !game.spawner) return 0;
+    const h = game.spawner.hazards.find((x) => !x.active);
+    if (!h) return 0;
+    const phl = C.playerSize[1] * C.hitboxScale / 2, lo = game.sigma + ahead - phl, hs = (len + 2 * phl) / 2;
+    Object.assign(h, { active: true, id: 970000, type: Core.T.CLOSURE, lane, lane2: lane, k: 0, lo, sigma: lo + hs, hs, hl: hs - phl, l: 2 * (hs - phl),
+      w: C.laneWidth * 0.9, row: -1, color: 0, variant: lane === 0 ? 1 : -1, power: 0, moveStart: Infinity, moveEnd: Infinity, blinkStart: Infinity,
+      vis: null, hit: false, bounced: false, nearMissed: true, seen: false, fade: 1, bx: 0, by: 0, bvx: 0, bvy: 0, ry: 0, spin: 0 });
+    return 1;
+  },
+  // ?debug only: a black-ice patch in `lane` starting `ahead` m in front of Pedro
+  spawnIce(lane, ahead, len) {
+    if (!DEBUG || !game.spawner) return 0;
+    const h = game.spawner.hazards.find((x) => !x.active);
+    if (!h) return 0;
+    Object.assign(h, { active: true, id: 960000, type: Core.T.ICE, lane, lane2: lane, k: 0, sigma: game.sigma + ahead + len / 2, hs: Core.iceHalfSpan(len),
+      hl: len / 2, l: len, w: C.laneWidth * 0.9, row: -1, color: 0, variant: 0, power: 0, moveStart: Infinity, moveEnd: Infinity, blinkStart: Infinity,
+      vis: null, hit: false, bounced: false, nearMissed: true, seen: false, fade: 1, bx: 0, by: 0 });
+    return 1;
+  },
+  // ?debug only: a snowplow train of `n` plows from lane `lane0`, first one `ahead` m in front of Pedro
+  spawnPlows(lane0, n, ahead) {
+    if (!DEBUG || !game.spawner) return 0;
+    const k = C.plowSpeedFrac, sz = C.hazardSize.plow;
+    for (let j = 0; j < n; j++) {
+      const h = game.spawner.hazards.find((x) => !x.active);
+      if (!h) return j;
+      Object.assign(h, { active: true, id: 950000 + j, type: Core.T.PLOW, lane: lane0 + j, lane2: lane0 + j, k, sigma: game.sigma + (ahead + j * 14) / (1 - k),
+        hs: Core.halfSpan(Core.T.PLOW), w: sz[0], l: sz[1], hl: sz[1] * C.hitboxScale / 2, row: -1, color: 0, variant: 0, power: 0,
+        moveStart: Infinity, moveEnd: Infinity, blinkStart: Infinity, vis: null, hit: false, bounced: false, nearMissed: false, seen: false,
+        minDx: 99, entered: false, lateDodge: false, fade: 1, ry: 0, spin: 0, bx: 0, by: 0, bvx: 0, bvy: 0 });
+    }
+    return n;
+  },
+  // Active hazards on the distance axis (tests)
+  hazards() {
+    const out = [];
+    if (game.spawner) for (const h of game.spawner.hazards) if (h.active) out.push({ type: Core.TYPE_NAMES[h.type], lane: h.lane, sigma: h.sigma, hs: h.hs, hl: h.hl, l: h.l,
+      ahead: (1 - h.k) * (h.sigma - game.sigma), row: h.row, vis: !!h.vis, seen: h.seen, sz: h.vis && h.vis.body ? h.vis.body.scale.z : 0 });
+    return out;
   },
   hudText() { return document.getElementById('hudPower').innerText.replace(/\s+/g, ' ').trim(); },
   renderProbe() {
