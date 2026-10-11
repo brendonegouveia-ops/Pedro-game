@@ -145,6 +145,8 @@
   .iconBtn svg { width: 22px; height: 22px; }
   #muteBtn { right: 14px; }
   #pauseBtn { right: 126px; }
+  #honkBtn { right: 182px; font-size: 22px; line-height: 1; }
+  #honkBtn:active { transform: scale(0.9); }
   #muteBtn .off { display: none; }
   #muteBtn.muted .on { display: none; }
   #muteBtn.muted .off { display: block; }
@@ -350,7 +352,7 @@
 
 <div id="titleScreen" class="layer screen">
   <h1 class="title">Pedro Makes It <span>to Game Night</span></h1>
-  <p class="sub">Every week Pedro drives to game night at Carlson's. Every week the drive gets longer and faster. Three chouriço links. One brand-new silver Jetta. Same driver.</p>
+  <p class="sub">Pedro's always late for game night. But he's got a brand-new Jetta and 3 chouriço links. Can you get him there?</p>
   <div class="weekPick" id="weekPick">
     <button class="wkBtn" id="weekPrev" type="button" aria-label="Previous week">◀</button>
     <div class="wkInfo"><b id="weekName">WEEK 1</b><small id="weekSub">10 mi · ☀️ Clear</small><small id="weekNight">Catan night</small></div>
@@ -402,6 +404,7 @@
 <div id="banner" class="hidden"><div class="b1" id="bannerB1">Pedro made it</div><div class="b2" id="bannerB2">to game night!</div><small id="bannerSub"></small></div>
 
 
+<button id="honkBtn" class="iconBtn hidden" type="button" aria-label="Honk the horn">🇵🇹</button>
 <button id="pauseBtn" class="iconBtn hidden" type="button" aria-label="Pause">
   <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
 </button>
@@ -421,6 +424,7 @@
     <div class="gPaint" id="garagePaint"></div>
     <div class="gList" id="garageList"></div>
     <div class="gActions"><button id="garageAction" type="button">Equipped</button><button class="lbBtn" id="garageClose" type="button">Done</button></div>
+    <button class="lbBtn hidden" id="garageHonk" type="button" style="margin-top:8px">🇵🇹 Try the horn</button>
     <div class="gMsg" id="garageMsg">Every coin you grab goes in your wallet.</div>
   </div>
 </div>
@@ -2744,6 +2748,17 @@ const Sfx = (() => {
       eng.f.frequency.setTargetAtTime(360 + speedFrac * 1400, t, 0.1);
       eng.g.gain.setTargetAtTime(0.1 * level, t, 0.12);
     },
+    // Portugal Flag decal: an obnoxious multi-tone air horn playing the start of the corridinho
+    fanfareHorn() {
+      if (!live()) return;
+      const t = ctx.currentTime, notes = [76, 81, 84, 83, 81, 80, 81], d = 0.105;
+      notes.forEach((m, i) => {
+        const f = hz(m), last = i === notes.length - 1, dur = last ? 0.42 : d * 0.92;
+        tone(t + i * d, 'square', f, f, dur, 0.13);
+        tone(t + i * d, 'sawtooth', f * 1.006, f * 1.006, dur, 0.07);
+        tone(t + i * d, 'square', f / 2, f / 2, dur, 0.05);
+      });
+    },
     whoosh() { if (!live()) return; noiseHit(ctx.currentTime, 0.38, 'bandpass', 500, 3200, 0.55); },
     crunch(level) {
       if (!live()) return;
@@ -3212,6 +3227,7 @@ window.addEventListener('keydown', (e) => {
   if (garageOpen) { if (k === 'Escape') { e.preventDefault(); closeGarage(); } return; }
   if (k === 'm' || k === 'M') { toggleMute(); return; }
   if (k === 'n' || k === 'N') { toggleMusic(); return; }
+  if ((k === 'h' || k === 'H') && game.state === 'play' && player.decal === 'portugal') { honk(); return; }
   if (k === 'ArrowLeft' || k === 'ArrowRight' || k === ' ' || k === 'ArrowUp' || k === 'ArrowDown') e.preventDefault();
   if (onAnyStartInput(true, k)) return;
   if (k === 'ArrowLeft' || k === 'a' || k === 'A') requestLane(-1);
@@ -3635,6 +3651,7 @@ function renderGarage() {
   else if (wallet.coins >= it.price) { ui.garageAction.textContent = 'Buy · 🪙 ' + it.price.toLocaleString(); ui.garageAction.disabled = false; }
   else { ui.garageAction.textContent = 'Need 🪙 ' + (it.price - wallet.coins).toLocaleString() + ' more'; ui.garageAction.disabled = true; }
   refreshWallet();
+  refreshHonk();
 }
 function openGarage() {
   garageOpen = true; garageSel = equippedDecal();
@@ -3668,6 +3685,23 @@ ui.garageAction.addEventListener('click', (e) => {
   wearDecal(it.id);
   renderGarage();
 });
+// Portugal Flag perk: a horn. Pure fun, no gameplay effect (no steering, traffic doesn't care).
+ui.honkBtn = $('honkBtn'); ui.garageHonk = $('garageHonk');
+let honkAt = -99, honks = 0;
+function honk() {
+  const now = performance.now() / 1000;
+  if (now - honkAt < 1.0) return;                 // short cooldown so it can't be spammed
+  honkAt = now; honks++;
+  Sfx.unlock();
+  Sfx.fanfareHorn();
+  if (game.state === 'play') { floatText('🇵🇹 FORÇA PORTUGAL!', '#ffe14d'); say('Força Portugal! 🇵🇹'); }
+}
+function refreshHonk() {
+  ui.honkBtn.classList.toggle('hidden', !(game.state === 'play' && player.decal === 'portugal'));
+  ui.garageHonk.classList.toggle('hidden', !(garageOpen && garageSel === 'portugal'));
+}
+ui.honkBtn.addEventListener('click', (e) => { e.stopPropagation(); honk(); ui.honkBtn.blur(); });
+ui.garageHonk.addEventListener('click', (e) => { e.stopPropagation(); honk(); });
 $('garageBtn').addEventListener('click', (e) => { e.stopPropagation(); openGarage(); });
 $('garageClose').addEventListener('click', (e) => { e.stopPropagation(); closeGarage(); });
 
@@ -4284,6 +4318,8 @@ function update(realDt) {
     updatePlayer(realDt);
   }
   updateDecal(game.time);
+  if ((game.state === 'play' && player.decal === 'portugal') === ui.honkBtn.classList.contains('hidden') ||
+      (garageOpen && garageSel === 'portugal') === ui.garageHonk.classList.contains('hidden')) refreshHonk();
   updateWeather(realDt, game.state === 'title' ? (garageOpen ? 0 : 22) : game.state === 'over' ? 0 : game.mph * speedMult() * worldTimeScale() * Core.MPH_TO_MPS);
   const speedFrac = Math.min(1.3, (game.mph * speedMult() - C.startSpeedMph) / (C.maxSpeedMph - C.startSpeedMph));
   updateCamera(realDt, game.state === 'play' || game.state === 'crashing' || game.state === 'finishing' || game.state === 'pulled' ? speedFrac : 0);
@@ -4337,6 +4373,7 @@ window.__pedro = {
       cop: { phase: game.cop.phase, t: game.cop.t, dur: game.cop.dur, plan: game.cop.plan.map((m) => m / Core.METERS_PER_MILE), next: game.cop.next,
         escapes: game.cop.escapes, chases: game.cop.chases, siren: Sfx.sirenOn(), fx: ui.copFx.classList.contains('on'),
         hud: ui.hudCop.classList.contains('hidden') ? '' : ui.hudCopTxt.textContent, mult: scoreMultiplier(), z: copCar.z, visible: copCar.group.visible },
+      honks, honkBtn: !ui.honkBtn.classList.contains('hidden'), garageHonk: !ui.garageHonk.classList.contains('hidden'),
       wallet: wallet.coins, owned: wallet.owned.slice(), decal: player.decal, paint: bodyPaint, bodyColor: player.silver.color.getHex(), stripe: decals.stripes.mat.color.getHex(), equipped: equippedDecal(), garage: garageOpen, bonusCoins: game.bonusCoins,
       weather: game.weather, fogFar: scene.fog.far, rainOn: rain.m.visible, snowOn: snow.m.visible, slides: game.slides, sliding: !!player.sliding,
       cones: coneMesh.count, closures: game.spawner ? game.spawner.hazards.filter((x) => x.active && x.type === Core.T.CLOSURE).length : 0,

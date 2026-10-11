@@ -690,6 +690,46 @@ if (!QUICK) await autopilot('cop', '?debug&seed=4245&week=5&start=3&copAt=3.06',
   g = await sn();
   g.wallet >= 404 && g.decal === 'flames' ? ok(`coins go straight into the wallet (${g.wallet}); the Jetta drives with its decal`) : fail('wallet during drive: ' + JSON.stringify({ w: g.wallet, decal: g.decal }));
   await pg.screenshot({ path: path.join(outDir, '30-driving-with-flames.png') });
+  // Portugal Flag perk: a horn that does nothing but make noise
+  await sleep(800);
+  await pg.goto(base + '?debug&seed=4&wallet=1000');
+  await pg.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  await pg.click('#garageBtn');
+  await pg.click('.gCard[data-id="portugal"]');
+  g = await sn();
+  const tryBtn = g.garageHonk;
+  await pg.click('#garageHonk');
+  g = await sn();
+  tryBtn && g.honks === 1 ? ok('garage: previewing the Portugal Flag shows "Try the horn", and it honks') : fail('garage horn: ' + JSON.stringify({ tryBtn, honks: g.honks }));
+  await pg.click('#garageAction');                       // buy (1,000)
+  await pg.keyboard.press('Escape');
+  await pg.keyboard.press('Enter');
+  await pg.waitForFunction(() => window.__pedro.snapshot().state === 'play');
+  await pg.evaluate(() => window.__pedro.grant(2));
+  await sleep(1200);                                      // horn cooldown
+  g = await sn();
+  const laneBefore = g.lane, btnShown = g.honkBtn;
+  await pg.click('#honkBtn');
+  await sleep(60);
+  g = await sn();
+  const afterClick = { honks: g.honks, lane: g.lane, state: g.state, speech: g.speech };
+  await sleep(1100);
+  await pg.keyboard.press('h');
+  g = await sn();
+  await pg.screenshot({ path: path.join(outDir, '32-portugal-horn.png') });
+  btnShown && afterClick.honks === 2 && afterClick.lane === laneBefore && afterClick.state === 'play' && /Força Portugal/.test(afterClick.speech) && g.honks === 3
+    ? ok(`Portugal Flag: 🇵🇹 horn button in the drive, H key too; honking never steers ("${afterClick.speech}")`) : fail('drive horn: ' + JSON.stringify({ btnShown, afterClick, honks: g.honks, laneBefore }));
+  // other decals: no horn button
+  await pg.goto(base + '?debug&seed=4');
+  await pg.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  await pg.click('#garageBtn'); await pg.click('.gCard[data-id=""]'); await pg.click('#garageAction'); await pg.keyboard.press('Escape');
+  await pg.keyboard.press('Enter');
+  await pg.waitForFunction(() => window.__pedro.snapshot().state === 'play');
+  await sleep(300);
+  g = await sn();
+  !g.honkBtn ? ok('no horn button without the Portugal Flag') : fail('horn button shown without the decal');
+  const sub = await pg.evaluate(() => document.querySelector('#titleScreen .sub').textContent);
+  /^Pedro's always late for game night\./.test(sub) ? ok(`intro copy: "${sub}"`) : fail('intro copy: ' + sub);
   if (errs.length) fail('garage page errors: ' + errs.join(' | ')); else ok('garage page: no errors');
   await pg.close();
 }
