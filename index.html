@@ -243,6 +243,27 @@
   #mirror.cop .mcop { display: block; }
   #mirror.cop .mlabel { background: #1d4fd6; }
   @keyframes mcop { 0% { background: #ff2030; box-shadow: 0 0 10px #ff2030; } 50% { background: #2a6bff; box-shadow: 0 0 10px #2a6bff; } }
+  /* Garage: panel up top, the Jetta spins in the showroom underneath */
+  #garageScreen { z-index: 40; pointer-events: none; }
+  .garage { pointer-events: auto; position: fixed; left: 12px; right: 12px; top: calc(env(safe-area-inset-top) + 10px); max-width: 460px; margin: 0 auto;
+    max-height: 58vh; display: flex; flex-direction: column; background: rgba(16,20,34,0.94); border: 2px solid rgba(255,255,255,0.2); border-radius: 18px; padding: 12px; box-sizing: border-box; }
+  .gHead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .gHead h2 { margin: 0; font-size: 24px; font-weight: 900; text-transform: uppercase; color: #ffd166; }
+  .wallet { font-weight: 900; font-size: 18px; color: #ffd84a; font-variant-numeric: tabular-nums; }
+  .gList { overflow-y: auto; touch-action: pan-y; display: grid; gap: 6px; padding-right: 2px; }
+  .gCard { display: grid; grid-template-columns: 40px 1fr auto; gap: 10px; align-items: center; padding: 7px 9px; border-radius: 12px;
+    background: rgba(255,255,255,0.06); border: 2px solid transparent; cursor: pointer; font: inherit; color: #fff; text-align: left; }
+  .gCard.sel { border-color: #ffd166; background: rgba(255,209,102,0.14); }
+  .gCard .sw { width: 40px; height: 28px; border-radius: 7px; border: 2px solid rgba(255,255,255,0.5); box-sizing: border-box; }
+  .gCard b { display: block; font-size: 15px; font-weight: 900; }
+  .gCard small { display: block; font-size: 11px; opacity: 0.7; font-weight: 700; }
+  .gCard em { font-style: normal; font-weight: 900; font-size: 13px; white-space: nowrap; }
+  .gCard em.own { color: #9ff0b8; } .gCard em.on { color: #ffd166; } .gCard em.lock { color: #ffd84a; opacity: 0.9; }
+  .gActions { display: flex; gap: 8px; margin-top: 10px; }
+  .gActions button { flex: 1; font: inherit; font-weight: 900; font-size: 16px; border: 0; border-radius: 999px; padding: 11px 14px; cursor: pointer; }
+  #garageAction { background: linear-gradient(135deg, #ffd166, #ff9f43); color: #1a1030; }
+  #garageAction:disabled { opacity: 0.45; }
+  .gMsg { min-height: 16px; margin-top: 6px; font-size: 13px; font-weight: 800; color: #ffe1a8; text-align: center; }
   /* Week picker (title) */
   .weekPick { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; pointer-events: auto; }
   .wkBtn {
@@ -326,6 +347,7 @@
   </div>
   <div class="cta">Tap / press any key to drive</div>
   <div class="best" id="titleBest">Best: 0</div>
+  <div class="titleBtns"><button class="lbBtn" id="garageBtn" type="button">🎨 Garage · 🪙 <span id="titleWallet">0</span></button></div>
   <div class="titleBtns"><button class="lbBtn" id="helpBtn" type="button">❓ How to play</button><button class="lbBtn" id="titleLbBtn" type="button">🏆 Leaderboard</button></div>
   <div class="hint">Swipe or tap left / right to change lanes<br>Keyboard: ← → or A / D · P pause · M mute · N music</div>
 </div>
@@ -376,6 +398,15 @@
 </button>
 <div id="toast" class="hidden"></div>
 
+<div id="garageScreen" class="layer hidden">
+  <div class="garage">
+    <div class="gHead"><h2>🎨 Garage</h2><div class="wallet">🪙 <span id="garageWallet">0</span></div></div>
+    <div class="gList" id="garageList"></div>
+    <div class="gActions"><button id="garageAction" type="button">Equipped</button><button class="lbBtn" id="garageClose" type="button">Done</button></div>
+    <div class="gMsg" id="garageMsg">Every coin you grab goes in your wallet.</div>
+  </div>
+</div>
+
 <div id="helpScreen" class="layer screen hidden">
   <div class="help">
     <h2>How to play</h2>
@@ -385,7 +416,7 @@
     <h3>Lives</h3>
     <p>Pedro has <b>3 chouriço links</b> (bottom-left). Every hit costs one and dents the Jetta. Lose all three and the drive is over. You get all three back every week.</p>
     <h3>Coins &amp; tailgaters</h3>
-    <p>🪙 Grab coins for points, and a whole trail for a bonus. Trails often run right at a car, so swerve out at the last second. When the <b>mirror</b> pops up at the top, tailgaters are coming from behind: a red dot in your lane means move.</p>
+    <p>🪙 Grab coins for points, and a whole trail for a bonus. Every coin is saved in your wallet: spend them in the <b>🎨 Garage</b> on decals for the Jetta (looks only). Trails often run right at a car, so swerve out at the last second. When the <b>mirror</b> pops up at the top, tailgaters are coming from behind: a red dot in your lane means move.</p>
     <h3>Road work &amp; weather</h3>
     <p>From Week 2, <b>road work</b> closes a lane for a stretch: an arrow board shows which way to merge, and cones line the closed lane. Week 3 is <b>rain</b>, so you see traffic later. From Week 4 it's <b>snow</b> (and later weeks rotate rain and snow): <b>snowplow trains</b> block 2–3 lanes, and steering onto <b>black ice</b> (the shiny blue patches) slides you one extra lane. Driving straight over ice is fine.</p>
     <h3>Cops</h3>
@@ -496,6 +527,19 @@ const CONFIG = {
   copEscapeBonus: [1500, 500],  // losing the cop pays copEscapeBonus[0] + copEscapeBonus[1] × (week − copMinWeek)
   copScoreMult: 1.5,            // points multiplier while the cop is chasing
   copPullSec: 1.8,              // real seconds of pulling over before the screen
+
+  // --- Garage: every coin goes into a saved wallet (this device) and buys decals for the Jetta. Cosmetic only.
+  weekCoinBonus: [50, 25],      // coins for finishing week w: [0] + [1] × (w − 1)
+  copEscapeCoins: 25,           // coins for losing a cop
+  decals: [
+    { id: 'stripes', name: 'Racing Stripes', price: 150, tag: 'Twin stripes, nose to tail' },
+    { id: 'student', name: 'Student Driver', price: 300, tag: 'Warn everyone. Honestly.' },
+    { id: 'flames', name: 'Flames', price: 600, tag: 'Adds zero horsepower' },
+    { id: 'portugal', name: 'Portugal Flag', price: 1000, tag: 'Vovó approved' },
+    { id: 'chourico', name: 'Chouriço Wrap', price: 1800, tag: 'Smells incredible' },
+    { id: 'gold', name: 'Gold Chrome', price: 3000, tag: 'Main character energy' },
+    { id: 'cop', name: 'Cop Car', price: 5000, tag: 'Cosmetic. They still chase you.' },
+  ],
 
   // --- Camera ---
   fovBase: 62,
@@ -1707,11 +1751,170 @@ function updateSmoke(dt, stage) {
     p.m.quaternion.copy(camera.quaternion);
   }
 }
-const SILVER_BY_STAGE = [0xd4d8de, 0xb6b9be, 0x9a9da2, 0x8a8d92];
+// ---------- Decals (garage cosmetics) ----------
+// Each decal is a group of thin textured planes / boxes on the Jetta (roof, trunk, hood, sides, rear face),
+// optionally with a paint color (body tint, still dimmed by crash damage) and a base glow.
+// Sedan reference (front = -z): trunk top y≈1.0 for z 1.32…2.2, roof y≈1.5 for z −0.43…0.59, hood y≈1.0 for z −2.1…−1.25,
+// rear face z=2.31 for y 0.3…0.8, sides x=±0.92.
+const STOCK_PAINT = 0xd4d8de, STOCK_GLOW = [0.08, 0.09, 0.11];
+function canvasTex(w, h, draw) {
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  draw(cv.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+const decalMat = (map, extra) => new THREE.MeshLambertMaterial(Object.assign({ map, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }, extra || {}));
+// flat plane on a top surface (texture top points forward, so it reads from behind)
+function topPlane(mat, w, l, y, z, x = 0) { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, l).rotateX(-Math.PI / 2), mat); m.position.set(x, y, z); return m; }
+function rearPlane(mat, w, h, y) { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat); m.position.set(0, y, 2.318); return m; }
+function sidePlanes(mat, l, h, y, z) {
+  const out = [];
+  for (const side of [-1, 1]) { const m = new THREE.Mesh(new THREE.PlaneGeometry(l, h).rotateY(side * Math.PI / 2), mat); m.position.set(side * 0.935, y, z); out.push(m); }
+  return out;
+}
+function textTex(lines, bg, fg, border) {
+  return canvasTex(512, 160, (g, w, h) => {
+    g.fillStyle = bg; g.fillRect(0, 0, w, h);
+    if (border) { g.strokeStyle = border; g.lineWidth = 14; g.strokeRect(7, 7, w - 14, h - 14); }
+    g.fillStyle = fg; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = '900 64px -apple-system, Helvetica, Arial, sans-serif';
+    g.fillText(lines[0], w / 2, lines[1] ? 62 : h / 2);
+    if (lines[1]) { g.font = '800 30px -apple-system, Helvetica, Arial, sans-serif'; g.fillText(lines[1], w / 2, 118); }
+  });
+}
+const DECAL_BUILDERS = {
+  stripes() {
+    const m = new THREE.MeshLambertMaterial({ color: 0x1846c8, polygonOffset: true, polygonOffsetFactor: -2 });
+    const g = new THREE.Group();
+    for (const x of [-0.2, 0.2]) {
+      g.add(topPlane(m, 0.2, 0.9, 1.012, 1.76, x), topPlane(m, 0.2, 1.02, 1.512, 0.08, x), topPlane(m, 0.2, 0.86, 1.012, -1.68, x));
+      const rw = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.92).rotateX(-Math.PI / 2), m); rw.rotation.x = 0.527; rw.position.set(x, 1.232, 0.985); g.add(rw);
+      const ws = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.98).rotateX(-Math.PI / 2), m); ws.rotation.x = -0.497; ws.position.set(x, 1.232, -0.85); g.add(ws);
+      const rf = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.5), m); rf.position.set(x, 0.55, 2.318); g.add(rf);
+    }
+    return { group: g };
+  },
+  student() {
+    const t = textTex(['STUDENT DRIVER', 'please be patient 🙏'], '#ffffff', '#c21a1a', '#c21a1a');
+    const m = decalMat(t);
+    const g = new THREE.Group();
+    g.add(topPlane(m, 1.4, 0.44, 1.012, 1.78), rearPlane(m, 1.1, 0.34, 0.6));
+    return { group: g };
+  },
+  flames() {
+    const t = canvasTex(512, 160, (g, w, h) => {
+      const grd = g.createLinearGradient(0, 0, w, 0);
+      grd.addColorStop(0, '#ffe14d'); grd.addColorStop(0.35, '#ff8a00'); grd.addColorStop(0.75, '#e2261c'); grd.addColorStop(1, 'rgba(226,38,28,0)');
+      g.fillStyle = grd;
+      for (let i = 0; i < 6; i++) {        // flame tongues licking toward the back
+        const y0 = 18 + i * 22, len = 300 + ((i * 97) % 5) * 40;
+        g.beginPath(); g.moveTo(0, y0 - 14);
+        g.bezierCurveTo(len * 0.4, y0 - 30, len * 0.7, y0 + 18, len, y0 - 6);
+        g.bezierCurveTo(len * 0.7, y0 + 34, len * 0.35, y0 + 30, 0, y0 + 22);
+        g.closePath(); g.fill();
+      }
+    });
+    const mHood = decalMat(t), mSide = decalMat(t);
+    const g = new THREE.Group();
+    const hood = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 1.6).rotateZ(-Math.PI / 2).rotateX(-Math.PI / 2), mHood);
+    hood.position.set(0, 1.012, -1.62); g.add(hood);
+    const trunk = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 1.6).rotateZ(-Math.PI / 2).rotateX(-Math.PI / 2), mHood);
+    trunk.scale.set(1, 1, 0.55); trunk.position.set(0, 1.012, 1.78); g.add(trunk);
+    mSide.side = THREE.DoubleSide;
+    const sides = sidePlanes(mSide, 3.2, 0.5, 0.6, -0.6);
+    sides[1].scale.z = -1;                                   // mirror so both sides lick toward the back
+    for (const sp of sides) g.add(sp);
+    return { group: g };
+  },
+  portugal() {
+    const t = canvasTex(320, 200, (g, w, h) => {
+      g.fillStyle = '#046a38'; g.fillRect(0, 0, w * 0.4, h);
+      g.fillStyle = '#da291c'; g.fillRect(w * 0.4, 0, w * 0.6, h);
+      g.strokeStyle = '#ffe14d'; g.lineWidth = 12; g.beginPath(); g.arc(w * 0.4, h / 2, 48, 0, Math.PI * 2); g.stroke();
+      g.fillStyle = '#ffffff'; g.fillRect(w * 0.4 - 22, h / 2 - 28, 44, 52);
+      g.fillStyle = '#da291c'; g.fillRect(w * 0.4 - 16, h / 2 - 22, 32, 40);
+      g.fillStyle = '#ffffff'; for (const [dx, dy] of [[0, -8], [-8, 2], [8, 2], [0, 12], [0, 2]]) g.fillRect(w * 0.4 + dx - 3, h / 2 + dy - 3, 6, 6);
+    });
+    const m = decalMat(t);
+    const g = new THREE.Group();
+    g.add(topPlane(m, 1.3, 0.98, 1.512, 0.08), topPlane(m, 1.3, 0.8, 1.012, 1.76), rearPlane(m, 0.7, 0.42, 0.56));
+    return { group: g };
+  },
+  chourico() {
+    const t = canvasTex(256, 256, (g, w, h) => {
+      for (let i = 0; i < 70; i++) {
+        const x = (i * 73) % w, y = (i * 151) % h, r = 4 + (i % 4) * 2.5;
+        g.fillStyle = i % 7 === 0 ? '#5a120a' : '#f4dcc4';
+        g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+      }
+    });
+    const m = decalMat(t), twine = new THREE.MeshLambertMaterial({ color: 0xe8d6a6 });
+    const g = new THREE.Group();
+    g.add(topPlane(m, 1.6, 0.9, 1.012, 1.76), topPlane(m, 1.4, 1.0, 1.512, 0.08), topPlane(m, 1.6, 0.86, 1.012, -1.68));
+    for (const sp of sidePlanes(m, 4.2, 0.5, 0.58, 0)) g.add(sp);
+    for (const z of [-1.95, 2.05]) {                         // twine ties
+      g.add(new THREE.Mesh(box(1.9, 0.05, 0.08), twine).translateY(z > 0 ? 0.99 : 0.99).translateZ(z));
+      for (const side of [-1, 1]) g.add(new THREE.Mesh(box(0.05, 0.6, 0.08), twine).translateX(side * 0.94).translateY(0.62).translateZ(z));
+    }
+    return { group: g, paint: 0x8f2617 };
+  },
+  gold() {
+    const g = new THREE.Group();
+    const sparkle = new THREE.MeshBasicMaterial({ map: makeGlowTexture(), color: 0xfff1a8, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+    const glints = [];
+    for (const [x, y, z] of [[0.5, 1.52, 0.3], [-0.6, 1.02, 1.8], [0.7, 1.02, -1.7], [-0.3, 1.52, -0.2]]) {
+      const s = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.5), sparkle); s.position.set(x, y + 0.1, z); g.add(s); glints.push(s);
+    }
+    return {
+      group: g, paint: 0xd9b23c, glow: [0.25, 0.18, 0.02],
+      update(t) { glints.forEach((s, i) => { s.scale.setScalar(0.3 + 0.7 * Math.max(0, Math.sin(t * 3 + i * 1.7))); s.quaternion.copy(camera.quaternion); }); },
+    };
+  },
+  cop() {
+    const white = new THREE.MeshLambertMaterial({ color: 0xf2f2f2 });
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(box(1.9, 0.4, 2.3), white).translateY(0.62).translateZ(0.15));            // white doors
+    g.add(new THREE.Mesh(box(1.2, 0.12, 0.36), new THREE.MeshLambertMaterial({ color: 0x111111 })).translateY(1.56).translateZ(0.1));
+    const red = new THREE.Mesh(box(0.5, 0.14, 0.32), new THREE.MeshBasicMaterial({ color: 0xff1a2a }));
+    const blue = new THREE.Mesh(box(0.5, 0.14, 0.32), new THREE.MeshBasicMaterial({ color: 0x2a6bff }));
+    red.position.set(-0.32, 1.68, 0.1); blue.position.set(0.32, 1.68, 0.1);
+    const t = textTex(['POLICE'], 'rgba(0,0,0,0)', '#ffffff');
+    const m = decalMat(t);
+    g.add(red, blue, topPlane(m, 1.3, 0.42, 1.012, 1.78), rearPlane(m, 1.0, 0.3, 0.58));
+    return {
+      group: g, paint: 0x16181d,
+      update(t) { const on = Math.floor(t * 4) % 2 === 0; red.material.color.setHex(on ? 0xff1a2a : 0x4a0a0e); blue.material.color.setHex(on ? 0x1a2a4a : 0x2a6bff); },
+    };
+  },
+};
+const decals = {};
+for (const d of C.decals) {
+  const built = DECAL_BUILDERS[d.id] ? DECAL_BUILDERS[d.id]() : { group: new THREE.Group() };
+  built.group.visible = false;
+  player.group.add(built.group);
+  decals[d.id] = built;
+}
+player.paint = STOCK_PAINT; player.glow = STOCK_GLOW; player.decal = '';
+// Show decal `id` on the Jetta ('' = stock silver)
+function wearDecal(id) {
+  for (const k in decals) decals[k].group.visible = k === id;
+  const d = decals[id];
+  player.decal = d ? id : '';
+  player.paint = d && d.paint !== undefined ? d.paint : STOCK_PAINT;
+  player.glow = d && d.glow ? d.glow : STOCK_GLOW;
+  setDamage(player.damageStage || 0);
+}
+function updateDecal(t) { const d = decals[player.decal]; if (d && d.update) d.update(t); }
+
+const DAMAGE_DIM = [1, 0.86, 0.74, 0.66];
+const _paint = new THREE.Color();
 function setDamage(stage) {
   player.damageStage = stage;
   for (let i = 0; i < player.damage.length; i++) player.damage[i].visible = stage >= i + 1;
-  player.silver.color.setHex(SILVER_BY_STAGE[Math.min(stage, 3)]);
+  player.silver.color.copy(_paint.setHex(player.paint || STOCK_PAINT).multiplyScalar(DAMAGE_DIM[Math.min(stage, 3)]));
   player.tailGlows[0].visible = stage < 2;
   if (stage === 0) for (const p of smoke.items) { p.life = 0; p.m.visible = false; }
 }
@@ -2090,6 +2293,7 @@ let coinCount = 0;
 function collectCoin(h) {
   releaseHazard(h);
   game.coins++;
+  wallet.add(1);
   game.score += C.coinPoints;
   if (h.variant !== game.trail) { game.trail = h.variant; game.trailGot = 0; }
   game.trailGot++;
@@ -2738,7 +2942,7 @@ function resetRun() {
   game.spawner = Core.createSpawner(game.seed, C.startLane, start, game.goalSigma);
   game.sigma = start; game.time = 0; game.score = 0; game.crashT = 0; game.spin = 0; game.slide = 0;
   game.nearMisses = 0; game.laneLeftAt.fill(-99);
-  game.coins = 0; game.trail = 0; game.trailGot = 0;
+  game.coins = 0; game.trail = 0; game.trailGot = 0; game.bonusCoins = 0;
   { const cp = game.cop; cp.plan = planCopChases(); while (cp.next < cp.plan.length && cp.plan[cp.next] <= start + 50) cp.next++; }
   // ?debug&start=N past the drop point starts in dubstep (no build)
   game.dropped = start >= game.goalSigma - C.weekDropMiles * Core.METERS_PER_MILE;
@@ -2758,6 +2962,7 @@ function resetRun() {
 
 function startRun() {
   closeHelp();
+  closeGarage();
   game.week = progress.sel;
   resetRun();
   game.state = 'play';
@@ -2812,7 +3017,9 @@ function endRun(result) {
   ui.overMiles.textContent = miles.toFixed(2) + ' mi';
   ui.overBest.textContent = bestScore.toLocaleString();
   ui.overNewBest.classList.toggle('hidden', !isBest);
-  ui.overCoins.textContent = '🪙 ' + game.coins + (game.coins === 1 ? ' coin' : ' coins');
+  ui.overCoins.textContent = '🪙 ' + game.coins + (game.coins === 1 ? ' coin' : ' coins') + (game.bonusCoins ? ' + ' + game.bonusCoins + ' bonus' : '') +
+    ' · wallet ' + wallet.coins.toLocaleString();
+  refreshWallet();
   ui.overBonus.classList.toggle('hidden', !won);
   if (won) ui.overBonus.textContent = 'Game night bonus +' + game.weekBonus.toLocaleString() + (game.lifeBonus ? ' · Links left +' + game.lifeBonus.toLocaleString() : '');
   ui.overCta.textContent = won ? 'Tap / Space: Week ' + (game.week + 1) + ' ▶' : 'Tap / Space to retry Week ' + game.week;
@@ -2924,10 +3131,10 @@ function updateHud() {
 
 // ---------- Input ----------
 // Taps/keys on UI (buttons, the name field, the leaderboard) never drive or restart the car.
-const UI_SEL = 'button, a, input, .lb, .weekPick, #boardScreen, #helpScreen';
+const UI_SEL = 'button, a, input, .lb, .weekPick, #boardScreen, #helpScreen, .garage';
 const onUi = (e) => e.target && e.target.closest && e.target.closest(UI_SEL);
 function onAnyStartInput(isKey, key) {
-  if (boardOpen || helpOpen) return true;
+  if (boardOpen || helpOpen || garageOpen) return true;
   if (game.state === 'title') {
     // ← / → pick the week on the title screen once more than one is unlocked
     if (isKey && progress.max > 1 && /^(ArrowLeft|ArrowRight|a|A|d|D)$/.test(key)) { selectWeek(progress.sel + (/^(ArrowRight|d|D)$/.test(key) ? 1 : -1)); return true; }
@@ -2954,6 +3161,7 @@ window.addEventListener('keydown', (e) => {
   const k = e.key;
   if (boardOpen) { if (k === 'Escape' || k === 'Enter' || k === ' ') { e.preventDefault(); closeBoard(); } return; }
   if (helpOpen) { if (k === 'Escape' || k === 'Enter' || k === ' ') { e.preventDefault(); closeHelp(); } return; }
+  if (garageOpen) { if (k === 'Escape') { e.preventDefault(); closeGarage(); } return; }
   if (k === 'm' || k === 'M') { toggleMute(); return; }
   if (k === 'n' || k === 'N') { toggleMusic(); return; }
   if (k === 'ArrowLeft' || k === 'ArrowRight' || k === ' ' || k === 'ArrowUp' || k === 'ArrowDown') e.preventDefault();
@@ -2973,7 +3181,7 @@ window.addEventListener('touchstart', (e) => {
   if (onAnyStartInput()) touch.consumed = true;
 }, { passive: false });
 window.addEventListener('touchmove', (e) => {
-  if (e.target && e.target.closest && e.target.closest('#boardScreen, #helpScreen')) return;   // let the board / help scroll
+  if (e.target && e.target.closest && e.target.closest('#boardScreen, #helpScreen, .garage')) return;   // let the board / help / garage scroll
   e.preventDefault();
   if (touch.consumed || touch.id === null) return;
   for (const t of e.changedTouches) {
@@ -3295,6 +3503,94 @@ $('helpBtn').addEventListener('click', (e) => { e.stopPropagation(); openHelp();
 $('helpClose').addEventListener('click', (e) => { e.stopPropagation(); closeHelp(); });
 // First visit: explain the rules before the first drive
 if (store.get('pedro.help', '') !== '1') openHelp();
+// ---------- Wallet + garage ----------
+// Coins are saved on this device the moment they're collected. ?debug&wallet=N sets the wallet (testing aid).
+const wallet = {
+  coins: Math.max(0, parseInt(store.get('pedro.wallet', '0'), 10) || 0),
+  owned: (() => { try { const a = JSON.parse(store.get('pedro.decals', '[]')); return Array.isArray(a) ? a : []; } catch (e) { return []; } })(),
+  add(n) { if (n > 0) { this.coins += n; store.set('pedro.wallet', this.coins); } },
+  owns(id) { return id === '' || this.owned.includes(id); },
+};
+{
+  const dw = parseInt(new URLSearchParams(location.search).get('wallet'), 10);
+  if (DEBUG && dw >= 0) { wallet.coins = dw; store.set('pedro.wallet', dw); }
+}
+const equippedDecal = () => { const id = store.get('pedro.decal', ''); return wallet.owns(id) && (id === '' || decals[id]) ? id : ''; };
+wearDecal(equippedDecal());
+ui.titleWallet = $('titleWallet'); ui.garage = $('garageScreen'); ui.garageList = $('garageList'); ui.garageWallet = $('garageWallet');
+ui.garageAction = $('garageAction'); ui.garageMsg = $('garageMsg');
+const refreshWallet = () => { ui.titleWallet.textContent = wallet.coins.toLocaleString(); ui.garageWallet.textContent = wallet.coins.toLocaleString(); };
+refreshWallet();
+const GARAGE_ITEMS = [{ id: '', name: 'Stock Silver', price: 0, tag: 'Factory fresh (for now)' }].concat(C.decals);
+const SWATCH = {
+  '': 'linear-gradient(135deg,#eef1f5,#a9afb8)',
+  stripes: 'linear-gradient(90deg,#cfd3d9 28%,#1846c8 28% 42%,#cfd3d9 42% 58%,#1846c8 58% 72%,#cfd3d9 72%)',
+  student: 'linear-gradient(#fff,#fff) padding-box, linear-gradient(#c21a1a,#c21a1a) border-box',
+  flames: 'linear-gradient(90deg,#ffe14d,#ff8a00 45%,#e2261c)',
+  portugal: 'linear-gradient(90deg,#046a38 40%,#da291c 40%)',
+  chourico: 'radial-gradient(circle at 30% 40%,#f4dcc4 12%,transparent 13%),radial-gradient(circle at 70% 65%,#f4dcc4 10%,transparent 11%),#8f2617',
+  gold: 'linear-gradient(135deg,#fff1a8,#d9b23c 45%,#8a6a12 70%,#f9e27a)',
+  cop: 'linear-gradient(90deg,#16181d 30%,#f2f2f2 30% 70%,#16181d 70%)',
+};
+let garageOpen = false, garageSel = '';
+function renderGarage() {
+  ui.garageList.textContent = '';
+  const eq = equippedDecal();
+  for (const it of GARAGE_ITEMS) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'gCard' + (it.id === garageSel ? ' sel' : ''); b.dataset.id = it.id;
+    const sw = document.createElement('i'); sw.className = 'sw'; sw.style.background = SWATCH[it.id] || '#888';
+    const txt = document.createElement('span'); const nm = document.createElement('b'); nm.textContent = it.name; const tg = document.createElement('small'); tg.textContent = it.tag;
+    txt.append(nm, tg);
+    const st = document.createElement('em');
+    if (it.id === eq) { st.className = 'on'; st.textContent = 'EQUIPPED'; }
+    else if (wallet.owns(it.id)) { st.className = 'own'; st.textContent = 'OWNED'; }
+    else { st.className = 'lock'; st.textContent = '🪙 ' + it.price.toLocaleString(); }
+    b.append(sw, txt, st);
+    b.addEventListener('click', (e) => { e.stopPropagation(); garageSel = it.id; wearDecal(it.id); renderGarage(); });   // tap = try it on
+    ui.garageList.appendChild(b);
+  }
+  const it = GARAGE_ITEMS.find((x) => x.id === garageSel);
+  if (garageSel === eq) { ui.garageAction.textContent = 'Equipped ✓'; ui.garageAction.disabled = true; }
+  else if (wallet.owns(garageSel)) { ui.garageAction.textContent = 'Equip'; ui.garageAction.disabled = false; }
+  else if (wallet.coins >= it.price) { ui.garageAction.textContent = 'Buy · 🪙 ' + it.price.toLocaleString(); ui.garageAction.disabled = false; }
+  else { ui.garageAction.textContent = 'Need 🪙 ' + (it.price - wallet.coins).toLocaleString() + ' more'; ui.garageAction.disabled = true; }
+  refreshWallet();
+}
+function openGarage() {
+  garageOpen = true; garageSel = equippedDecal();
+  ui.title.classList.add('hidden'); ui.garage.classList.remove('hidden');
+  ui.garageMsg.textContent = 'Every coin you grab goes in your wallet. Tap a decal to try it on.';
+  renderGarage();
+}
+function closeGarage() {
+  if (!garageOpen) return;
+  garageOpen = false;
+  ui.garage.classList.add('hidden');
+  wearDecal(equippedDecal());                      // drop any try-on
+  if (game.state === 'title') ui.title.classList.remove('hidden');
+  refreshWallet();
+}
+ui.garageAction.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const it = GARAGE_ITEMS.find((x) => x.id === garageSel);
+  if (!it) return;
+  if (!wallet.owns(it.id)) {
+    if (wallet.coins < it.price) return;
+    wallet.coins -= it.price; store.set('pedro.wallet', wallet.coins);
+    wallet.owned.push(it.id); store.set('pedro.decals', JSON.stringify(wallet.owned));
+    ui.garageMsg.textContent = 'Bought ' + it.name + '! It\'s on the Jetta.';
+    ui.confetti.classList.remove('go'); void ui.confetti.offsetWidth; ui.confetti.classList.add('go');
+    setTimeout(() => ui.confetti.classList.remove('go'), 2600);
+    if (window.__pedroAudio) window.__pedroAudio.fanfare();
+  } else ui.garageMsg.textContent = it.name + ' equipped.';
+  store.set('pedro.decal', it.id);
+  wearDecal(it.id);
+  renderGarage();
+});
+$('garageBtn').addEventListener('click', (e) => { e.stopPropagation(); openGarage(); });
+$('garageClose').addEventListener('click', (e) => { e.stopPropagation(); closeGarage(); });
+
 function toTitle() {
   releaseAllHazards();
   game.state = 'title';
@@ -3317,7 +3613,18 @@ $('overMenuBtn').addEventListener('click', (e) => {
 
 // ---------- Camera ----------
 const camLook = new THREE.Vector3();
+let showroom = 0;     // 0 = normal camera, 1 = garage close-up
 function updateCamera(dt, speedFrac) {
+  showroom += ((garageOpen ? 1 : 0) - showroom) * Math.min(1, dt * 4);
+  if (showroom > 0.001) {
+    // orbit the car; aim level with the camera so the car sits in the lower third, under the garage panel
+    const ang = game.time * 0.6 * showroom, r = lerp(C.camBack, 9.5, showroom), cx = player.x, y = lerp(C.camHeight, 3.2, showroom);
+    camera.position.set(cx * (1 - showroom) * 0.55 + (cx + Math.sin(ang) * r) * showroom, y, lerp(C.camBack, Math.cos(ang) * r, showroom));
+    camLook.set(cx, lerp(0.9, y, showroom), lerp(-C.camLookAhead, 0, showroom));
+    camera.lookAt(camLook);
+    sky.position.copy(camera.position);
+    return;
+  }
   const fov = lerp(C.fovBase, C.fovMax, speedFrac);
   if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
   const shake = (game.state === 'play' ? C.shakeMax * speedFrac * speedFrac : 0) + (game.shakeT > 0 ? game.shakeT * 0.9 : 0);
@@ -3572,7 +3879,8 @@ function updateEffects(realDt) {
   const detail = game.effect === POWER.DETAIL;
   player.shine.visible = detail;
   const pulse = detail ? 0.5 + 0.5 * Math.sin(game.time * 14) : 0;
-  player.silver.emissive.setRGB(0.08 + pulse * 0.55, 0.09 + pulse * 0.42, 0.11 + pulse * 0.1);
+  const gw = player.glow || STOCK_GLOW;
+  player.silver.emissive.setRGB(gw[0] + pulse * 0.55, gw[1] + pulse * 0.42, gw[2] + pulse * 0.1);
   player.group.visible = !(game.invulnT > 0 && game.state === 'play' && Math.floor(game.invulnT * 12) % 2 === 0);
 }
 
@@ -3653,6 +3961,7 @@ function endChase(escaped) {
   ui.copFx.classList.remove('on'); ui.hudCop.classList.add('hidden');
   if (!escaped) return;
   cp.escapes++;
+  game.bonusCoins += C.copEscapeCoins; wallet.add(C.copEscapeCoins);
   const bonus = C.copEscapeBonus[0] + C.copEscapeBonus[1] * Math.max(0, game.week - C.copMinWeek);
   game.score += bonus;
   floatText('LOST HIM! +' + bonus.toLocaleString(), '#8fb4ff');
@@ -3729,6 +4038,8 @@ function finishWeek() {
   game.weekBonus = C.weekBonus[0] + C.weekBonus[1] * (game.week - 1);
   game.lifeBonus = C.weekLifeBonus * game.lives;
   game.score += game.weekBonus + game.lifeBonus;
+  game.bonusCoins += C.weekCoinBonus[0] + C.weekCoinBonus[1] * (game.week - 1);
+  wallet.add(C.weekCoinBonus[0] + C.weekCoinBonus[1] * (game.week - 1));
   unlockWeek(game.week + 1);
   game.winLine = WEEK_COMPLETE_LINES[Math.floor(Math.random() * WEEK_COMPLETE_LINES.length)].replace(/\{week\}/g, game.week);
   say(game.winLine, true);
@@ -3887,12 +4198,13 @@ function update(realDt) {
     updateSmoke(realDt, player.damageStage);
     // frozen wreck behind the game-over screen
   } else {
-    // Title: idle cruise
+    // Title: idle cruise (the garage stops the road and orbits the car)
     game.time += realDt;
-    scrollRoad(realDt * 22);
+    if (!garageOpen) scrollRoad(realDt * 22);
     updatePlayer(realDt);
   }
-  updateWeather(realDt, game.state === 'title' ? 22 : game.state === 'over' ? 0 : game.mph * speedMult() * worldTimeScale() * Core.MPH_TO_MPS);
+  updateDecal(game.time);
+  updateWeather(realDt, game.state === 'title' ? (garageOpen ? 0 : 22) : game.state === 'over' ? 0 : game.mph * speedMult() * worldTimeScale() * Core.MPH_TO_MPS);
   const speedFrac = Math.min(1.3, (game.mph * speedMult() - C.startSpeedMph) / (C.maxSpeedMph - C.startSpeedMph));
   updateCamera(realDt, game.state === 'play' || game.state === 'crashing' || game.state === 'finishing' || game.state === 'pulled' ? speedFrac : 0);
   if (DEBUG) { updateDebugStrips(); updateDebug(miles); }
@@ -3945,6 +4257,7 @@ window.__pedro = {
       cop: { phase: game.cop.phase, t: game.cop.t, dur: game.cop.dur, plan: game.cop.plan.map((m) => m / Core.METERS_PER_MILE), next: game.cop.next,
         escapes: game.cop.escapes, chases: game.cop.chases, siren: Sfx.sirenOn(), fx: ui.copFx.classList.contains('on'),
         hud: ui.hudCop.classList.contains('hidden') ? '' : ui.hudCopTxt.textContent, mult: scoreMultiplier(), z: copCar.z, visible: copCar.group.visible },
+      wallet: wallet.coins, owned: wallet.owned.slice(), decal: player.decal, equipped: equippedDecal(), garage: garageOpen, bonusCoins: game.bonusCoins,
       weather: game.weather, fogFar: scene.fog.far, rainOn: rain.m.visible, snowOn: snow.m.visible, slides: game.slides, sliding: !!player.sliding,
       cones: coneMesh.count, closures: game.spawner ? game.spawner.hazards.filter((x) => x.active && x.type === Core.T.CLOSURE).length : 0,
       week: game.week, weekMiles: game.weekMiles, result: game.result, dropped: game.dropped, weekMax: progress.max, weekSel: progress.sel,

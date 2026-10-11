@@ -256,6 +256,8 @@ if (!QUICK) await autopilot('finish', '?debug&seed=777&start=9.8', 25, async (st
   lines.includes(w.roast) ? ok(`Pedro's week-complete line: "${w.roast}"`) : fail('week-complete line: ' + w.roast);
   const bonus = await p2.textContent('#overBonus');
   /Game night bonus \+3,000 · Links left \+1,500/.test(bonus) ? ok(`bonus: "${bonus}"`) : fail('bonus line: ' + bonus);
+  const coinLine = await p2.textContent('#overCoins');
+  w.bonusCoins === 50 && /\+ 50 bonus · wallet [\d,]+/.test(coinLine) ? ok(`week 1 pays 50 bonus coins into the wallet: "${coinLine}"`) : fail('week coin bonus: ' + JSON.stringify({ b: w.bonusCoins, coinLine }));
   w.musicStyle === 'dubstep' ? ok('started inside the last 2 miles: dubstep from the start') : fail('music near the finish: ' + w.musicStyle);
   await sleep(700);
   await p2.keyboard.press(' ');
@@ -553,10 +555,78 @@ if (!QUICK) await autopilot('cop', '?debug&seed=4245&week=5&start=3&copAt=3.06',
   await pc.waitForFunction(() => window.__pedro.snapshot().cop.escapes > 0, null, { timeout: 60000, polling: 50 }).catch(() => {});
   c = await sn();
   const escLines = await pc.evaluate(() => COP_ESCAPE_LINES);
-  c.cop.escapes === 1 && !c.cop.siren && !c.cop.fx && c.score - before >= 2000 && escLines.includes(c.speech)
+  c.cop.escapes === 1 && !c.cop.siren && !c.cop.fx && c.score - before >= 2000 && escLines.includes(c.speech) && c.bonusCoins === 25
     ? ok(`outlasted the chase: lost him (+${Math.round(c.score - before)} incl. the 2,000 bonus), siren off, Pedro: "${c.speech}"`) : fail('escape: ' + JSON.stringify({ cop: c.cop, gained: c.score - before, speech: c.speech }));
   if (errs.length) fail('cop page errors: ' + errs.join(' | ')); else ok('cop page: no errors');
   await pc.close();
+}
+
+// --- Garage: wallet, try-on, buy, equip, persistence ---
+{
+  const pg = await context.newPage();
+  const errs = [];
+  pg.on('pageerror', (e) => errs.push(e.message));
+  pg.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
+  const base = pathToFileURL(path.join(root, 'index.html')).href;
+  const sn = () => pg.evaluate(() => window.__pedro.snapshot());
+  await pg.goto(base + '?debug&seed=4&wallet=1000');
+  await pg.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  await pg.evaluate(() => { localStorage.removeItem('pedro.decals'); localStorage.removeItem('pedro.decal'); });
+  await sleep(800);
+  await pg.goto(base + '?debug&seed=4&wallet=1000');
+  await pg.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  const label = await pg.textContent('#garageBtn');
+  /Garage · 🪙 1,000/.test(label) ? ok(`title shows the wallet: "${label.trim()}"`) : fail('garage button: ' + label);
+  await pg.click('#garageBtn');
+  let g = await sn();
+  const cards = await pg.evaluate(() => [...document.querySelectorAll('.gCard')].map((c) => c.innerText.replace(/\s+/g, ' ').trim()));
+  g.garage && cards.length === 8 && /Stock Silver.*EQUIPPED/.test(cards[0]) && /Cop Car.*5,000/.test(cards[7]) && /Racing Stripes.*150/.test(cards[1])
+    ? ok(`garage: ${cards.length} items, stripes 150 … cop car 5,000; stock silver equipped`) : fail('garage list: ' + JSON.stringify({ open: g.garage, cards }));
+  // try on something too expensive: it shows on the car, can't be bought, comes off on close
+  await pg.click('.gCard[data-id="gold"]');
+  g = await sn();
+  let action = await pg.evaluate(() => ({ t: document.getElementById('garageAction').textContent, d: document.getElementById('garageAction').disabled }));
+  await sleep(700);
+  await pg.screenshot({ path: path.join(outDir, '29-garage-try-gold.png') });
+  g.decal === 'gold' && action.d && /Need 🪙 2,000 more/.test(action.t) ? ok(`try-on: gold chrome shows on the Jetta; "${action.t}"`) : fail('try-on: ' + JSON.stringify({ decal: g.decal, action }));
+  // taps / keys inside the garage never start a drive
+  await pg.keyboard.press('Enter'); await pg.keyboard.press('ArrowLeft');
+  g = await sn();
+  g.state === 'title' && g.garage ? ok('keys inside the garage never start a drive') : fail(`garage input leak: ${g.state}`);
+  // buy flames (600)
+  await pg.click('.gCard[data-id="flames"]');
+  action = await pg.evaluate(() => document.getElementById('garageAction').textContent);
+  await pg.click('#garageAction');
+  g = await sn();
+  const msg = await pg.textContent('#garageMsg');
+  /Buy · 🪙 600/.test(action) && g.wallet === 400 && g.owned.includes('flames') && g.equipped === 'flames' && g.decal === 'flames'
+    ? ok(`bought Flames: wallet 1,000 → ${g.wallet}, equipped ("${msg}")`) : fail('buy: ' + JSON.stringify({ action, w: g.wallet, owned: g.owned, eq: g.equipped }));
+  // switch to stock and back without paying again
+  await pg.click('.gCard[data-id=""]'); await pg.click('#garageAction');
+  await pg.click('.gCard[data-id="flames"]');
+  action = await pg.evaluate(() => document.getElementById('garageAction').textContent);
+  await pg.click('#garageAction');
+  g = await sn();
+  action === 'Equip' && g.wallet === 400 && g.equipped === 'flames' ? ok('owned decals re-equip for free') : fail('re-equip: ' + JSON.stringify({ action, w: g.wallet, eq: g.equipped }));
+  await pg.keyboard.press('Escape');
+  g = await sn();
+  !g.garage && g.state === 'title' ? ok('Escape closes the garage back to the title') : fail('garage close: ' + JSON.stringify({ garage: g.garage, s: g.state }));
+  // persists across reloads; coins grabbed in a drive land in the wallet
+  await sleep(1000);
+  await pg.goto(base + '?debug&seed=4&start=0.5');
+  await pg.waitForFunction(() => window.__pedro && window.__pedro.ready);
+  g = await sn();
+  g.wallet === 400 && g.equipped === 'flames' && g.decal === 'flames' ? ok('wallet, owned decals and the equipped decal survive a reload') : fail('garage persistence: ' + JSON.stringify({ w: g.wallet, eq: g.equipped, decal: g.decal }));
+  await pg.keyboard.press('Enter');
+  await pg.waitForFunction(() => window.__pedro.snapshot().state === 'play');
+  await pg.evaluate(() => window.__pedro.grant(2));
+  await pg.evaluate(() => window.__pedro.spawnCoins(window.__pedro.snapshot().lane, 30, 4));
+  await pg.waitForFunction(() => window.__pedro.snapshot().coins >= 4, null, { timeout: 30000 }).catch(() => {});
+  g = await sn();
+  g.wallet >= 404 && g.decal === 'flames' ? ok(`coins go straight into the wallet (${g.wallet}); the Jetta drives with its decal`) : fail('wallet during drive: ' + JSON.stringify({ w: g.wallet, decal: g.decal }));
+  await pg.screenshot({ path: path.join(outDir, '30-driving-with-flames.png') });
+  if (errs.length) fail('garage page errors: ' + errs.join(' | ')); else ok('garage page: no errors');
+  await pg.close();
 }
 
 // --- How to play: first visit opens it, taps on it don't start a drive, it never reappears once closed ---
@@ -569,7 +639,7 @@ if (!QUICK) await autopilot('cop', '?debug&seed=4245&week=5&start=3&copAt=3.06',
   let h = await hp.evaluate(() => window.__pedro.snapshot());
   const helpTxt = await hp.evaluate(() => document.querySelector('.help').innerText);
   await hp.screenshot({ path: path.join(outDir, '21-how-to-play.png') });
-  h.help && /Full Coverage/.test(helpTxt) && /Donut/.test(helpTxt) && /3 chouriço links/.test(helpTxt) && /Week 1 is 10 miles/.test(helpTxt) && /black ice/.test(helpTxt) && /road work/i.test(helpTxt) && /pulled over/.test(helpTxt)
+  h.help && /Full Coverage/.test(helpTxt) && /Donut/.test(helpTxt) && /3 chouriço links/.test(helpTxt) && /Week 1 is 10 miles/.test(helpTxt) && /black ice/.test(helpTxt) && /road work/i.test(helpTxt) && /pulled over/.test(helpTxt) && /Garage/.test(helpTxt)
     ? ok('first visit: How to Play opens with rules, lives, weeks, road work, weather and every power-up') : fail('help on first visit: ' + JSON.stringify({ open: h.help }));
   const hb = await hp.locator('.help h3').first().boundingBox();
   await hp.mouse.click(hb.x + 10, hb.y + 5);
