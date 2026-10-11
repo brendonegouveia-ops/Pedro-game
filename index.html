@@ -259,6 +259,13 @@
   .gCard small { display: block; font-size: 11px; opacity: 0.7; font-weight: 700; }
   .gCard em { font-style: normal; font-weight: 900; font-size: 13px; white-space: nowrap; }
   .gCard em.own { color: #9ff0b8; } .gCard em.on { color: #ffd166; } .gCard em.lock { color: #ffd84a; opacity: 0.9; }
+  .gPaintHead { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; font-weight: 900; letter-spacing: 0.1em; opacity: 0.8; margin: 0 2px 5px; }
+  .gPaintHead span { letter-spacing: 0; font-weight: 800; opacity: 0.85; color: #ffe1a8; }
+  .gPaint { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 10px; }
+  .psw { width: 30px; height: 30px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.35); padding: 0; cursor: pointer; box-sizing: border-box; position: relative; overflow: hidden; }
+  .psw.sel { border: 3px solid #ffd166; box-shadow: 0 0 0 2px rgba(255,209,102,0.35); }
+  .psw.custom { background: conic-gradient(#ff3b3b, #ffd21a, #3bd16b, #2a9bff, #a855f7, #ff3b3b); display: grid; place-items: center; font-size: 14px; }
+  .psw.custom input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; border: 0; padding: 0; }
   .gActions { display: flex; gap: 8px; margin-top: 10px; }
   .gActions button { flex: 1; font: inherit; font-weight: 900; font-size: 16px; border: 0; border-radius: 999px; padding: 11px 14px; cursor: pointer; }
   #garageAction { background: linear-gradient(135deg, #ffd166, #ff9f43); color: #1a1030; }
@@ -401,6 +408,8 @@
 <div id="garageScreen" class="layer hidden">
   <div class="garage">
     <div class="gHead"><h2>🎨 Garage</h2><div class="wallet">🪙 <span id="garageWallet">0</span></div></div>
+    <div class="gPaintHead">PAINT · FREE <span id="paintNote"></span></div>
+    <div class="gPaint" id="garagePaint"></div>
     <div class="gList" id="garageList"></div>
     <div class="gActions"><button id="garageAction" type="button">Equipped</button><button class="lbBtn" id="garageClose" type="button">Done</button></div>
     <div class="gMsg" id="garageMsg">Every coin you grab goes in your wallet.</div>
@@ -416,7 +425,7 @@
     <h3>Lives</h3>
     <p>Pedro has <b>3 chouriço links</b> (bottom-left). Every hit costs one and dents the Jetta. Lose all three and the drive is over. You get all three back every week.</p>
     <h3>Coins &amp; tailgaters</h3>
-    <p>🪙 Grab coins for points, and a whole trail for a bonus. Every coin is saved in your wallet: spend them in the <b>🎨 Garage</b> on decals for the Jetta (looks only). Trails often run right at a car, so swerve out at the last second. When the <b>mirror</b> pops up at the top, tailgaters are coming from behind: a red dot in your lane means move.</p>
+    <p>🪙 Grab coins for points, and a whole trail for a bonus. Every coin is saved in your wallet: spend them in the <b>🎨 Garage</b> on decals for the Jetta (looks only). Paint colors there are free. Trails often run right at a car, so swerve out at the last second. When the <b>mirror</b> pops up at the top, tailgaters are coming from behind: a red dot in your lane means move.</p>
     <h3>Road work &amp; weather</h3>
     <p>From Week 2, <b>road work</b> closes a lane for a stretch: an arrow board shows which way to merge, and cones line the closed lane. Week 3 is <b>rain</b>, so you see traffic later. From Week 4 it's <b>snow</b> (and later weeks rotate rain and snow): <b>snowplow trains</b> block 2–3 lanes, and steering onto <b>black ice</b> (the shiny blue patches) slides you one extra lane. Driving straight over ice is fine.</p>
     <h3>Cops</h3>
@@ -531,6 +540,13 @@ const CONFIG = {
   // --- Garage: every coin goes into a saved wallet (this device) and buys decals for the Jetta. Cosmetic only.
   weekCoinBonus: [50, 25],      // coins for finishing week w: [0] + [1] × (w − 1)
   copEscapeCoins: 25,           // coins for losing a cop
+  // Free body colors (garage, plus a custom color picker). Full wraps (decals with their own paint) cover it.
+  paints: [
+    { name: 'Silver', hex: 0xd4d8de }, { name: 'White', hex: 0xf4f4f4 }, { name: 'Black', hex: 0x26282e },
+    { name: 'Red', hex: 0xd62828 }, { name: 'Blue', hex: 0x1f5fd6 }, { name: 'Midnight', hex: 0x1b2a55 },
+    { name: 'Green', hex: 0x2f8f4e }, { name: 'Yellow', hex: 0xf2c12e }, { name: 'Orange', hex: 0xf27a1a },
+    { name: 'Purple', hex: 0x7b3fd6 }, { name: 'Pink', hex: 0xf06ba8 },
+  ],
   decals: [
     { id: 'stripes', name: 'Racing Stripes', price: 150, tag: 'Twin stripes, nose to tail' },
     { id: 'student', name: 'Student Driver', price: 300, tag: 'Warn everyone. Honestly.' },
@@ -1795,7 +1811,7 @@ const DECAL_BUILDERS = {
       const ws = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.98).rotateX(-Math.PI / 2), m); ws.rotation.x = -0.497; ws.position.set(x, 1.232, -0.85); g.add(ws);
       const rf = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.5), m); rf.position.set(x, 0.55, 2.318); g.add(rf);
     }
-    return { group: g };
+    return { group: g, mat: m };
   },
   student() {
     const t = textTex(['STUDENT DRIVER', 'please be patient 🙏'], '#ffffff', '#c21a1a', '#c21a1a');
@@ -1898,12 +1914,22 @@ for (const d of C.decals) {
   decals[d.id] = built;
 }
 player.paint = STOCK_PAINT; player.glow = STOCK_GLOW; player.decal = '';
-// Show decal `id` on the Jetta ('' = stock silver)
+// Body color chosen in the garage (free). Decals with their own paint (full wraps) cover it.
+let bodyPaint = (() => { const v = parseInt(store.get('pedro.paint', ''), 10); return Number.isFinite(v) && v >= 0 && v <= 0xffffff ? v : STOCK_PAINT; })();
+const _sc = new THREE.Color();
+// racing stripes: blue, or white when the paint is dark or already blue
+function stripeColorFor(hex) {
+  _sc.setHex(hex);
+  const lum = 0.299 * _sc.r + 0.587 * _sc.g + 0.114 * _sc.b;
+  return lum < 0.35 || (_sc.b > _sc.r + 0.15 && _sc.b > _sc.g + 0.1) ? 0xf4f4f4 : 0x1846c8;
+}
+// Show decal `id` on the Jetta ('' = none, just paint)
 function wearDecal(id) {
   for (const k in decals) decals[k].group.visible = k === id;
   const d = decals[id];
   player.decal = d ? id : '';
-  player.paint = d && d.paint !== undefined ? d.paint : STOCK_PAINT;
+  player.paint = d && d.paint !== undefined ? d.paint : bodyPaint;
+  if (decals.stripes && decals.stripes.mat) decals.stripes.mat.color.setHex(stripeColorFor(bodyPaint));
   player.glow = d && d.glow ? d.glow : STOCK_GLOW;
   setDamage(player.damageStage || 0);
 }
@@ -3521,7 +3547,38 @@ ui.titleWallet = $('titleWallet'); ui.garage = $('garageScreen'); ui.garageList 
 ui.garageAction = $('garageAction'); ui.garageMsg = $('garageMsg');
 const refreshWallet = () => { ui.titleWallet.textContent = wallet.coins.toLocaleString(); ui.garageWallet.textContent = wallet.coins.toLocaleString(); };
 refreshWallet();
-const GARAGE_ITEMS = [{ id: '', name: 'Stock Silver', price: 0, tag: 'Factory fresh (for now)' }].concat(C.decals);
+const GARAGE_ITEMS = [{ id: '', name: 'No Decal', price: 0, tag: 'Just the paint' }].concat(C.decals);
+ui.garagePaint = $('garagePaint'); ui.paintNote = $('paintNote');
+const hexCss = (h) => '#' + h.toString(16).padStart(6, '0');
+function setPaint(hex, save) {
+  bodyPaint = hex;
+  if (save) store.set('pedro.paint', hex);
+  wearDecal(garageOpen ? garageSel : equippedDecal());
+}
+function renderPaint() {
+  ui.garagePaint.textContent = '';
+  for (const pt of C.paints) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'psw' + (pt.hex === bodyPaint ? ' sel' : ''); b.style.background = hexCss(pt.hex);
+    b.title = pt.name; b.setAttribute('aria-label', pt.name + ' paint'); b.dataset.hex = pt.hex;
+    b.addEventListener('click', (e) => { e.stopPropagation(); setPaint(pt.hex, true); renderPaint(); renderGarage(); });
+    ui.garagePaint.appendChild(b);
+  }
+  // custom: the phone's color picker
+  const custom = !C.paints.some((pt) => pt.hex === bodyPaint);
+  const lab = document.createElement('label');
+  lab.className = 'psw custom' + (custom ? ' sel' : ''); lab.title = 'Custom color';
+  if (custom) lab.style.background = hexCss(bodyPaint);
+  lab.textContent = custom ? '' : '+';
+  const inp = document.createElement('input');
+  inp.type = 'color'; inp.id = 'paintCustom'; inp.value = hexCss(bodyPaint); inp.setAttribute('aria-label', 'Custom paint color');
+  inp.addEventListener('input', () => setPaint(parseInt(inp.value.slice(1), 16), false));
+  inp.addEventListener('change', () => { setPaint(parseInt(inp.value.slice(1), 16), true); renderPaint(); renderGarage(); });
+  lab.appendChild(inp);
+  ui.garagePaint.appendChild(lab);
+  const d = decals[garageSel];
+  ui.paintNote.textContent = d && d.paint !== undefined ? 'covered by the ' + GARAGE_ITEMS.find((x) => x.id === garageSel).name : '';
+}
 const SWATCH = {
   '': 'linear-gradient(135deg,#eef1f5,#a9afb8)',
   stripes: 'linear-gradient(90deg,#cfd3d9 28%,#1846c8 28% 42%,#cfd3d9 42% 58%,#1846c8 58% 72%,#cfd3d9 72%)',
@@ -3539,7 +3596,7 @@ function renderGarage() {
   for (const it of GARAGE_ITEMS) {
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'gCard' + (it.id === garageSel ? ' sel' : ''); b.dataset.id = it.id;
-    const sw = document.createElement('i'); sw.className = 'sw'; sw.style.background = SWATCH[it.id] || '#888';
+    const sw = document.createElement('i'); sw.className = 'sw'; sw.style.background = it.id === '' ? hexCss(bodyPaint) : SWATCH[it.id] || '#888';
     const txt = document.createElement('span'); const nm = document.createElement('b'); nm.textContent = it.name; const tg = document.createElement('small'); tg.textContent = it.tag;
     txt.append(nm, tg);
     const st = document.createElement('em');
@@ -3547,7 +3604,7 @@ function renderGarage() {
     else if (wallet.owns(it.id)) { st.className = 'own'; st.textContent = 'OWNED'; }
     else { st.className = 'lock'; st.textContent = '🪙 ' + it.price.toLocaleString(); }
     b.append(sw, txt, st);
-    b.addEventListener('click', (e) => { e.stopPropagation(); garageSel = it.id; wearDecal(it.id); renderGarage(); });   // tap = try it on
+    b.addEventListener('click', (e) => { e.stopPropagation(); garageSel = it.id; wearDecal(it.id); renderGarage(); renderPaint(); });   // tap = try it on
     ui.garageList.appendChild(b);
   }
   const it = GARAGE_ITEMS.find((x) => x.id === garageSel);
@@ -3560,14 +3617,15 @@ function renderGarage() {
 function openGarage() {
   garageOpen = true; garageSel = equippedDecal();
   ui.title.classList.add('hidden'); ui.garage.classList.remove('hidden');
-  ui.garageMsg.textContent = 'Every coin you grab goes in your wallet. Tap a decal to try it on.';
+  ui.garageMsg.textContent = 'Paint is free. Every coin you grab goes in your wallet. Tap a decal to try it on.';
   renderGarage();
+  renderPaint();
 }
 function closeGarage() {
   if (!garageOpen) return;
   garageOpen = false;
   ui.garage.classList.add('hidden');
-  wearDecal(equippedDecal());                      // drop any try-on
+  wearDecal(equippedDecal());                      // drop any try-on (the paint choice stays)
   if (game.state === 'title') ui.title.classList.remove('hidden');
   refreshWallet();
 }
@@ -4257,7 +4315,7 @@ window.__pedro = {
       cop: { phase: game.cop.phase, t: game.cop.t, dur: game.cop.dur, plan: game.cop.plan.map((m) => m / Core.METERS_PER_MILE), next: game.cop.next,
         escapes: game.cop.escapes, chases: game.cop.chases, siren: Sfx.sirenOn(), fx: ui.copFx.classList.contains('on'),
         hud: ui.hudCop.classList.contains('hidden') ? '' : ui.hudCopTxt.textContent, mult: scoreMultiplier(), z: copCar.z, visible: copCar.group.visible },
-      wallet: wallet.coins, owned: wallet.owned.slice(), decal: player.decal, equipped: equippedDecal(), garage: garageOpen, bonusCoins: game.bonusCoins,
+      wallet: wallet.coins, owned: wallet.owned.slice(), decal: player.decal, paint: bodyPaint, bodyColor: player.silver.color.getHex(), stripe: decals.stripes.mat.color.getHex(), equipped: equippedDecal(), garage: garageOpen, bonusCoins: game.bonusCoins,
       weather: game.weather, fogFar: scene.fog.far, rainOn: rain.m.visible, snowOn: snow.m.visible, slides: game.slides, sliding: !!player.sliding,
       cones: coneMesh.count, closures: game.spawner ? game.spawner.hazards.filter((x) => x.active && x.type === Core.T.CLOSURE).length : 0,
       week: game.week, weekMiles: game.weekMiles, result: game.result, dropped: game.dropped, weekMax: progress.max, weekSel: progress.sel,

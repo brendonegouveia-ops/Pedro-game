@@ -12,7 +12,7 @@
 - **Cop chases** (from Week 3: one chase a week, two from Week 5, three from Week 7). A siren, red/blue flashes and a 🚨 in the rear-view mirror give about 2 s of warning, then a timer starts (15 s in Week 3, up to 25 s by Week 11). **Hit anything while it runs and Pedro is pulled over: the drive ends**, and Full Coverage doesn't help (Fresh Detail does). Outlast it and he loses them: +1,500 (plus 500 per week after Week 3). Points are worth ×1.5 during a chase. Chase timing is seeded, so `?seed=` replays it too. Traffic doesn't change during a chase.
 - **Final stretch.** Two miles out, Carlson turns the speakers up: the accordion music builds and drops into dubstep. The last ~200 m before the driveway are traffic-free.
 - **Coins** along the road pay extra, and a full trail earns a bonus. Many trails run straight at a car, so grabbing them all means swerving out at the last second.
-- **Garage.** Every coin goes into a wallet saved on the phone (plus 50 coins for finishing Week 1, +25 per later week, and 25 for losing a cop). **🎨 Garage** on the title screen spends them on decals for the Jetta: Racing Stripes 150, Student Driver 300, Flames 600, Portugal Flag 1,000, Chouriço Wrap 1,800, Gold Chrome 3,000, Cop Car 5,000. Tap one to try it on (the car spins in a showroom under the list), buy it, switch any time. Decals are looks only. A full week puts ~210 (Week 1) to ~400 (Week 11) coins on the road. The wallet and decals live on that device only.
+- **Garage.** Every coin goes into a wallet saved on the phone (plus 50 coins for finishing Week 1, +25 per later week, and 25 for losing a cop). **🎨 Garage** on the title screen spends them on decals for the Jetta: Racing Stripes 150, Student Driver 300, Flames 600, Portugal Flag 1,000, Chouriço Wrap 1,800, Gold Chrome 3,000, Cop Car 5,000. Tap one to try it on (the car spins in a showroom under the list), buy it, switch any time. **Paint is free**: 11 colors plus a custom color picker, shown under the simple decals (stripes turn white on dark or blue paint). Chouriço Wrap, Gold Chrome and Cop Car cover the paint. Decals and paint are looks only. A full week puts ~210 (Week 1) to ~400 (Week 11) coins on the road. The wallet and decals live on that device only.
 - **How to Play** opens on the first visit (and from the ❓ button on the title screen): rules, lives, coins, tailgaters, every power-up.
 
 - **Lives:** Pedro has **3 chouriço links** (bottom-left). Every hit costs one, he says something like "I can fix that", and the Jetta looks more beat-up: scuffs and a cracked window, then duct tape, a smashed taillight and smoke. The third hit ends the run.
@@ -37,7 +37,7 @@ Everything tunable lives in the `CONFIG` object at the top of the `<script id="p
 | Road work | `closureMinWeek` (2), `closureChance`, `closureMeters`, `closureGapMeters`, `closureStartFrac` / `closureStartFracStep` / `closureStartFracMin` (how far into a week closures start) |
 | Snowplows | `plowChance`, `plowTrioChance`, `plowStaggerMeters`, `plowSpeedFrac`, `hazardSize.plow` |
 | Black ice | `iceChance`, `iceMeters`, `iceSlideMs` |
-| Garage | `decals` (id, name, price, tag; the art is in `DECAL_BUILDERS` in the game script), `weekCoinBonus` (`[50, 25]`), `copEscapeCoins` (25) |
+| Garage | `decals` (id, name, price, tag; the art is in `DECAL_BUILDERS` in the game script), `paints` (free colors), `weekCoinBonus` (`[50, 25]`), `copEscapeCoins` (25) |
 | Cop chases | `copMinWeek` (3), `copMaxChases` / `copMoreEveryWeeks` (how many per week), `copChaseSec` (`[15, 25]`), `copWarnSec`, `copWindow` (where in the week), `copEscapeBonus`, `copScoreMult` (1.5), `copPullSec` |
 | Coins | `coinPoints`, `coinTrailBonus`, `coinTrailChance`, `coinTrailMin`/`Max`, `coinRiskyChance`, `coinBailSec` |
 | Lives | `lives` (3), `hitGraceSec` (invulnerable time after a hit) |
@@ -179,5 +179,5 @@ node smoke.mjs --quick       # same, minus the two long autopilot runs
 ## Notes
 
 - **iPhone sound:** sound starts on your first tap (an iOS rule). The game tells iOS it's media playback, so it plays through the speaker even with the ring/silent switch on (iOS 16.4+ uses `navigator.audioSession`; older versions use a silent looping audio element). Use the in-game 🔊 / ♪ buttons to mute.
-- **Saved data:** the high score, unlocked weeks, coin wallet, owned/equipped decals, and mute setting live in `localStorage`, so they stay on that phone/browser. Clearing site data resets them; private browsing just doesn't save them. `?debug&wallet=5000` sets the wallet for testing.
+- **Saved data:** the high score, unlocked weeks, coin wallet, owned/equipped decals, paint color, and mute setting live in `localStorage`, so they stay on that phone/browser. Clearing site data resets them; private browsing just doesn't save them. `?debug&wallet=5000` sets the wallet for testing.
 - **Battery:** the game pauses automatically when you switch tabs or lock the phone; tap to resume.

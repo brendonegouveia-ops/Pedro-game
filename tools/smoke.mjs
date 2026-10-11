@@ -571,7 +571,7 @@ if (!QUICK) await autopilot('cop', '?debug&seed=4245&week=5&start=3&copAt=3.06',
   const sn = () => pg.evaluate(() => window.__pedro.snapshot());
   await pg.goto(base + '?debug&seed=4&wallet=1000');
   await pg.waitForFunction(() => window.__pedro && window.__pedro.ready);
-  await pg.evaluate(() => { localStorage.removeItem('pedro.decals'); localStorage.removeItem('pedro.decal'); });
+  await pg.evaluate(() => { localStorage.removeItem('pedro.decals'); localStorage.removeItem('pedro.decal'); localStorage.removeItem('pedro.paint'); });
   await sleep(800);
   await pg.goto(base + '?debug&seed=4&wallet=1000');
   await pg.waitForFunction(() => window.__pedro && window.__pedro.ready);
@@ -580,15 +580,32 @@ if (!QUICK) await autopilot('cop', '?debug&seed=4245&week=5&start=3&copAt=3.06',
   await pg.click('#garageBtn');
   let g = await sn();
   const cards = await pg.evaluate(() => [...document.querySelectorAll('.gCard')].map((c) => c.innerText.replace(/\s+/g, ' ').trim()));
-  g.garage && cards.length === 8 && /Stock Silver.*EQUIPPED/.test(cards[0]) && /Cop Car.*5,000/.test(cards[7]) && /Racing Stripes.*150/.test(cards[1])
-    ? ok(`garage: ${cards.length} items, stripes 150 … cop car 5,000; stock silver equipped`) : fail('garage list: ' + JSON.stringify({ open: g.garage, cards }));
+  g.garage && cards.length === 8 && /No Decal.*EQUIPPED/.test(cards[0]) && /Cop Car.*5,000/.test(cards[7]) && /Racing Stripes.*150/.test(cards[1])
+    ? ok(`garage: ${cards.length} items, stripes 150 … cop car 5,000; no decal equipped`) : fail('garage list: ' + JSON.stringify({ open: g.garage, cards }));
+  // Free paint: presets and a custom color, under simple decals; full wraps cover it
+  const swatches = await pg.evaluate(() => document.querySelectorAll('#garagePaint .psw').length);
+  g.paint === 0xd4d8de && swatches === 12 ? ok('paint: silver by default, 11 free colors + a custom color picker') : fail(`paint row: paint ${g.paint}, ${swatches} swatches`);
+  await pg.click('#garagePaint .psw[aria-label="Red paint"]');
+  g = await sn();
+  g.paint === 0xd62828 && g.bodyColor === 0xd62828 && g.wallet === 1000 ? ok('picked Red: the Jetta is red, free (wallet still 1,000)') : fail('red paint: ' + JSON.stringify({ p: g.paint, c: g.bodyColor, w: g.wallet }));
+  await pg.evaluate(() => { const i = document.getElementById('paintCustom'); i.value = '#12a4b8'; i.dispatchEvent(new Event('input')); i.dispatchEvent(new Event('change')); });
+  g = await sn();
+  const customSel = await pg.evaluate(() => document.querySelector('#garagePaint .psw.custom').classList.contains('sel'));
+  g.paint === 0x12a4b8 && g.bodyColor === 0x12a4b8 && customSel ? ok('custom color picker: #12a4b8 applied and selected') : fail('custom paint: ' + JSON.stringify({ p: g.paint, c: g.bodyColor, customSel }));
+  await pg.click('#garagePaint .psw[aria-label="Blue paint"]');
+  await pg.click('.gCard[data-id="stripes"]');
+  g = await sn();
+  g.bodyColor === 0x1f5fd6 && g.stripe === 0xf4f4f4 ? ok('stripes go white on blue paint so they stay visible; paint shows under the decal') : fail('stripes on blue: ' + JSON.stringify({ c: g.bodyColor, s: g.stripe }));
+  await pg.screenshot({ path: path.join(outDir, '31-garage-blue-stripes.png') });
   // try on something too expensive: it shows on the car, can't be bought, comes off on close
   await pg.click('.gCard[data-id="gold"]');
   g = await sn();
   let action = await pg.evaluate(() => ({ t: document.getElementById('garageAction').textContent, d: document.getElementById('garageAction').disabled }));
   await sleep(700);
   await pg.screenshot({ path: path.join(outDir, '29-garage-try-gold.png') });
-  g.decal === 'gold' && action.d && /Need 🪙 2,000 more/.test(action.t) ? ok(`try-on: gold chrome shows on the Jetta; "${action.t}"`) : fail('try-on: ' + JSON.stringify({ decal: g.decal, action }));
+  const note = await pg.textContent('#paintNote');
+  g.decal === 'gold' && action.d && /Need 🪙 2,000 more/.test(action.t) && g.bodyColor === 0xd9b23c && /covered by the Gold Chrome/.test(note)
+    ? ok(`try-on: gold chrome covers the paint ("${note}"); "${action.t}"`) : fail('try-on: ' + JSON.stringify({ decal: g.decal, action, c: g.bodyColor, note }));
   // taps / keys inside the garage never start a drive
   await pg.keyboard.press('Enter'); await pg.keyboard.press('ArrowLeft');
   g = await sn();
@@ -616,7 +633,7 @@ if (!QUICK) await autopilot('cop', '?debug&seed=4245&week=5&start=3&copAt=3.06',
   await pg.goto(base + '?debug&seed=4&start=0.5');
   await pg.waitForFunction(() => window.__pedro && window.__pedro.ready);
   g = await sn();
-  g.wallet === 400 && g.equipped === 'flames' && g.decal === 'flames' ? ok('wallet, owned decals and the equipped decal survive a reload') : fail('garage persistence: ' + JSON.stringify({ w: g.wallet, eq: g.equipped, decal: g.decal }));
+  g.wallet === 400 && g.equipped === 'flames' && g.decal === 'flames' && g.paint === 0x1f5fd6 && g.bodyColor === 0x1f5fd6 ? ok('wallet, owned decals, the equipped decal and the paint survive a reload') : fail('garage persistence: ' + JSON.stringify({ w: g.wallet, eq: g.equipped, decal: g.decal }));
   await pg.keyboard.press('Enter');
   await pg.waitForFunction(() => window.__pedro.snapshot().state === 'play');
   await pg.evaluate(() => window.__pedro.grant(2));
