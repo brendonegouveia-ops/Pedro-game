@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHAOS, FACETIME, KAYLA_CALL_REPLIES, MOVE, UPPY } from '../src/config';
+import { CHAOS, FACETIME, KAYLA_CALL_REPLIES, MOVE, PATIENCE, UPPY } from '../src/config';
 import { ROOM_IDS, ROOM_RECTS, STATIONS, STATION_IDS, WALLS, blocked, dist, hops, roomPath, type StationId } from '../src/sim/house';
 import { Sim, clockString, type Request } from '../src/sim/sim';
 
@@ -82,6 +82,29 @@ describe('house', () => {
       }
   });
 
+  it('walking from one doorway to another never pins Nick on a doorframe', () => {
+    const doors = [
+      [84, 163],
+      [328, 163],
+      [136, 353],
+      [191, 462],
+    ];
+    for (const [ax, ay] of doors)
+      for (const [bx, by] of doors) {
+        if (ax === bx && ay === by) continue;
+        const sim = quiet();
+        sim.nick.x = ax;
+        sim.nick.y = ay;
+        sim.setMoveTarget({ x: bx, y: by });
+        let t = 0;
+        while (t < 6 && dist(sim.nick.x, sim.nick.y, bx, by) > 12) {
+          sim.update(1 / 60);
+          t += 1 / 60;
+        }
+        expect(t, `door (${ax},${ay}) -> (${bx},${by})`).toBeLessThan(6);
+      }
+  });
+
   it('low coffee makes Nick 40% slower', () => {
     const a = quiet();
     const b = quiet();
@@ -117,6 +140,33 @@ describe('jobs', () => {
     sim.completeGesture();
     expect(sim.requests).not.toContain(r);
     expect(sim.nick.hand).toBe(null);
+  });
+
+  it('on my way: grabbing what a kid wants tops up and slows their timer', () => {
+    const sim = quiet();
+    kidHere(sim, 'evelyn', 300, 300);
+    const r = inject(sim, { kind: 'juice_box', owner: 'evelyn', room: 'living', patience: 10, left: 2 });
+    walkToStation(sim, 'juice');
+    sim.completeGesture();
+    expect(sim.promisedId).toBe(r.id);
+    expect(r.left).toBeGreaterThanOrEqual(10 * PATIENCE.promisedTopUp - 2);
+    const before = r.left;
+    step(sim, 1);
+    expect(before - r.left).toBeCloseTo(PATIENCE.promisedRate, 1);
+  });
+
+  it('a crying kid takes the item Nick is holding and stops crying', () => {
+    const sim = quiet();
+    kidHere(sim, 'tyler', 300, 300);
+    Object.assign(sim.actors.tyler, { state: 'crying', cryLeft: 10 });
+    sim.nick.hand = 'snack';
+    sim.chaos = 20;
+    sim.update(1 / 60);
+    expect(sim.interaction?.target).toEqual({ t: 'kid', kid: 'tyler' });
+    sim.completeGesture();
+    expect(sim.actors.tyler.state).toBe('idle');
+    expect(sim.nick.hand).toBe(null);
+    expect(sim.chaos).toBeLessThan(20);
   });
 
   it('engaged in a gesture: Nick cannot move, other timers keep running', () => {
@@ -167,6 +217,7 @@ describe('requests', () => {
     sim.update(1 / 60);
     sim.choose(0);
     expect(sim.chaos).toBe(0);
+    sim.actors.evelyn.nextReq = 1e9; // resolving re-arms her next request; keep her quiet
     step(sim, 59);
     expect(sim.actors.evelyn.state).toBe('idle');
     step(sim, 1.2);

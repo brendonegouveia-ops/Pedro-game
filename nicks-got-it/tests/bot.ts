@@ -34,6 +34,7 @@ export function runBot(seed: number, opts: BotOpts, maxT = 900): Sim {
   let lastInteraction = -1;
   let uhWait = -1;
   let think = 0;
+  let stuck = 0;
   let goal: { x: number; y: number } | null = null;
   while (!sim.over && sim.t < maxT) {
     sim.update(dt);
@@ -77,9 +78,14 @@ export function runBot(seed: number, opts: BotOpts, maxT = 900): Sim {
       continue;
     }
 
+    // Walk to the goal; stop when close or when Nick can't get any closer (goal by a wall).
     if (goal && dist(sim.nick.x, sim.nick.y, goal.x, goal.y) > 12) {
+      const wasSteering = sim.steering;
       sim.setMoveTarget(goal);
-      continue;
+      if (!wasSteering || sim.nick.moving) stuck = 0;
+      else if ((stuck += dt) < 0.2) continue;
+      else goal = null;
+      if (goal) continue;
     }
     sim.setMoveTarget(null);
     think -= dt;

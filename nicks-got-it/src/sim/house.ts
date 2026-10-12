@@ -33,17 +33,17 @@ export const WALL_T = 6;
 
 // Solid walls. Gaps between them are the doorways listed in DOORS.
 export const WALLS: Rect[] = [
-  // House back wall (backyard side): back door at x 60-108, slider at x 300-356.
-  { x: 0, y: 160, w: 60, h: WALL_T },
-  { x: 108, y: 160, w: 192, h: WALL_T },
-  { x: 356, y: 160, w: 34, h: WALL_T },
-  // Kitchen | Living (door y 228-280), then Garage | Living (door y 440-488).
-  { x: 188, y: 166, w: WALL_T, h: 62 },
-  { x: 188, y: 280, w: WALL_T, h: 160 },
-  { x: 188, y: 488, w: WALL_T, h: 32 },
-  // Kitchen | Garage (door x 112-160).
-  { x: 0, y: 350, w: 112, h: WALL_T },
-  { x: 160, y: 350, w: 28, h: WALL_T },
+  // House back wall (backyard side): back door at x 48-120, slider at x 290-366.
+  { x: 0, y: 160, w: 48, h: WALL_T },
+  { x: 120, y: 160, w: 170, h: WALL_T },
+  { x: 366, y: 160, w: 24, h: WALL_T },
+  // Kitchen | Living is open plan (opening y 196-336); Garage | Living door at y 430-494.
+  { x: 188, y: 166, w: WALL_T, h: 30 },
+  { x: 188, y: 336, w: WALL_T, h: 94 },
+  { x: 188, y: 494, w: WALL_T, h: 26 },
+  // Kitchen | Garage (door x 100-172).
+  { x: 0, y: 350, w: 100, h: WALL_T },
+  { x: 172, y: 350, w: 16, h: WALL_T },
 ];
 
 export interface Door {
@@ -52,14 +52,15 @@ export interface Door {
   x: number;
   y: number;
   axis: 'h' | 'v'; // h: wall runs horizontally (pass through in y)
+  span: number; // opening width
 }
 
 export const DOORS: Door[] = [
-  { a: 'backyard', b: 'kitchen', x: 84, y: 163, axis: 'h' },
-  { a: 'backyard', b: 'living', x: 328, y: 163, axis: 'h' },
-  { a: 'kitchen', b: 'living', x: 191, y: 254, axis: 'v' },
-  { a: 'kitchen', b: 'garage', x: 136, y: 353, axis: 'h' },
-  { a: 'garage', b: 'living', x: 191, y: 464, axis: 'v' },
+  { a: 'backyard', b: 'kitchen', x: 84, y: 163, axis: 'h', span: 72 },
+  { a: 'backyard', b: 'living', x: 328, y: 163, axis: 'h', span: 76 },
+  { a: 'kitchen', b: 'living', x: 191, y: 266, axis: 'v', span: 140 },
+  { a: 'kitchen', b: 'garage', x: 136, y: 353, axis: 'h', span: 72 },
+  { a: 'garage', b: 'living', x: 191, y: 462, axis: 'v', span: 64 },
 ];
 
 export type StationId =
@@ -92,7 +93,7 @@ export const STATIONS: Record<StationId, StationDef> = {
   juice: { room: 'kitchen', label: 'Juice', x: 18, y: 284 },
   sippy: { room: 'kitchen', label: 'Sippy', x: 18, y: 330 },
   highchair: { room: 'kitchen', label: 'High chair', x: 150, y: 318 },
-  thermostat: { room: 'living', label: 'Thermostat', x: 206, y: 198 },
+  thermostat: { room: 'living', label: 'Thermostat', x: 238, y: 180 },
   playpen: { room: 'living', label: 'Playpen', x: 352, y: 222 },
   bandaids: { room: 'garage', label: 'Band-aids', x: 30, y: 374 },
   spot_toolbox: { room: 'garage', label: 'Toolbox', x: 18, y: 432 },
@@ -212,18 +213,157 @@ export function lineClear(x0: number, y0: number, x1: number, y1: number, r: num
   return true;
 }
 
+// ------------------------------------------------------------ pathfinding
+// A* over an 8 px grid with per-radius clearance, then string-pulled: the walker heads for the
+// furthest path point it can see. Works for any target, including points on or inside walls.
+const CELL = 8;
+const COLS = Math.ceil(WORLD.w / CELL);
+const ROWS = Math.ceil(WORLD.h / CELL);
+const freeCache = new Map<number, Uint8Array>();
+// Paths keep this much extra distance from walls, so rounding never pins a walker on a doorframe.
+const MARGIN = 2;
+
+function freeGrid(r: number): Uint8Array {
+  let g = freeCache.get(r);
+  if (g) return g;
+  g = new Uint8Array(COLS * ROWS);
+  for (let j = 0; j < ROWS; j++)
+    for (let i = 0; i < COLS; i++) g[j * COLS + i] = blocked(i * CELL + CELL / 2, j * CELL + CELL / 2, r + MARGIN) ? 0 : 1;
+  freeCache.set(r, g);
+  return g;
+}
+
+const cellOf = (x: number, y: number) => {
+  const i = Math.max(0, Math.min(COLS - 1, Math.floor(x / CELL)));
+  const j = Math.max(0, Math.min(ROWS - 1, Math.floor(y / CELL)));
+  return j * COLS + i;
+};
+const cx = (c: number) => (c % COLS) * CELL + CELL / 2;
+const cy = (c: number) => Math.floor(c / COLS) * CELL + CELL / 2;
+
+// Nearest free cell to a cell (BFS outward).
+function nearestFree(c: number, free: Uint8Array): number {
+  if (free[c]) return c;
+  const seen = new Uint8Array(COLS * ROWS);
+  const q = [c];
+  seen[c] = 1;
+  for (let h = 0; h < q.length; h++) {
+    const cur = q[h];
+    if (free[cur]) return cur;
+    const i = cur % COLS;
+    const j = Math.floor(cur / COLS);
+    for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const ni = i + di;
+      const nj = j + dj;
+      if (ni < 0 || nj < 0 || ni >= COLS || nj >= ROWS) continue;
+      const n = nj * COLS + ni;
+      if (!seen[n]) {
+        seen[n] = 1;
+        q.push(n);
+      }
+    }
+  }
+  return c;
+}
+
+// The free point closest to (x, y) for a walker of radius r.
+export function snapFree(x: number, y: number, r: number): { x: number; y: number } {
+  if (!blocked(x, y, r)) return { x, y };
+  const c = nearestFree(cellOf(x, y), freeGrid(r));
+  return { x: cx(c), y: cy(c) };
+}
+
+export function findPath(x: number, y: number, tx: number, ty: number, r: number): { x: number; y: number }[] {
+  const free = freeGrid(r);
+  const start = nearestFree(cellOf(x, y), free);
+  const goal = nearestFree(cellOf(tx, ty), free);
+  if (start === goal) return [];
+  const N = COLS * ROWS;
+  const gs = new Float32Array(N).fill(Infinity);
+  const came = new Int32Array(N).fill(-1);
+  const closed = new Uint8Array(N);
+  const gx = cx(goal);
+  const gy = cy(goal);
+  const heap: [number, number][] = []; // [f, cell]
+  const push = (f: number, c: number) => {
+    heap.push([f, c]);
+    let k = heap.length - 1;
+    while (k > 0) {
+      const p = (k - 1) >> 1;
+      if (heap[p][0] <= heap[k][0]) break;
+      [heap[p], heap[k]] = [heap[k], heap[p]];
+      k = p;
+    }
+  };
+  const pop = () => {
+    const top = heap[0];
+    const last = heap.pop()!;
+    if (heap.length) {
+      heap[0] = last;
+      let k = 0;
+      for (;;) {
+        const a = 2 * k + 1;
+        const b = a + 1;
+        let m = k;
+        if (a < heap.length && heap[a][0] < heap[m][0]) m = a;
+        if (b < heap.length && heap[b][0] < heap[m][0]) m = b;
+        if (m === k) break;
+        [heap[m], heap[k]] = [heap[k], heap[m]];
+        k = m;
+      }
+    }
+    return top;
+  };
+  gs[start] = 0;
+  push(0, start);
+  while (heap.length) {
+    const [, c] = pop();
+    if (closed[c]) continue;
+    if (c === goal) break;
+    closed[c] = 1;
+    const i = c % COLS;
+    const j = Math.floor(c / COLS);
+    for (let dj = -1; dj <= 1; dj++)
+      for (let di = -1; di <= 1; di++) {
+        if (!di && !dj) continue;
+        const ni = i + di;
+        const nj = j + dj;
+        if (ni < 0 || nj < 0 || ni >= COLS || nj >= ROWS) continue;
+        const n = nj * COLS + ni;
+        if (!free[n] || closed[n]) continue;
+        if (di && dj && (!free[j * COLS + ni] || !free[nj * COLS + i])) continue; // no corner cutting
+        const g = gs[c] + (di && dj ? 1.4142 : 1);
+        if (g < gs[n]) {
+          gs[n] = g;
+          came[n] = c;
+          push(g + Math.hypot(cx(n) - gx, cy(n) - gy) / CELL, n);
+        }
+      }
+  }
+  if (came[goal] === -1) return [];
+  const out: { x: number; y: number }[] = [];
+  for (let c = goal; c !== start && c !== -1; c = came[c]) out.push({ x: cx(c), y: cy(c) });
+  return out.reverse();
+}
+
 // Where to head next to reach (tx, ty) from (x, y): straight if nothing is in the way,
-// otherwise through the next doorway on the room path.
+// otherwise the furthest visible point on the grid path.
+const pathCache = new Map<number, { x: number; y: number }[]>();
+
 export function steer(x: number, y: number, tx: number, ty: number, r: number): { x: number; y: number } {
-  if (lineClear(x, y, tx, ty, r)) return { x: tx, y: ty };
-  const from = roomAt(x, y);
-  const to = roomAt(tx, ty);
-  const path = roomPath(from, to);
-  if (!path.length) return { x: tx, y: ty };
-  const d = doorBetween(from, path[0])!;
-  const beyond = doorSide(d, path[0], 18);
-  if (lineClear(x, y, beyond.x, beyond.y, r)) return beyond;
-  return doorSide(d, from, 18);
+  const t = snapFree(tx, ty, r);
+  if (lineClear(x, y, t.x, t.y, r)) return t;
+  // Paths depend only on (start cell, goal cell, radius): cache them; walkers stay in a cell for several frames.
+  const key = cellOf(x, y) * 65536 + cellOf(t.x, t.y) * 16 + r;
+  let path = pathCache.get(key);
+  if (!path) {
+    if (pathCache.size > 4000) pathCache.clear();
+    path = findPath(x, y, t.x, t.y, r);
+    pathCache.set(key, path);
+  }
+  if (!path.length) return t;
+  for (let k = path.length - 1; k >= 0; k--) if (lineClear(x, y, path[k].x, path[k].y, r + MARGIN / 2)) return path[k];
+  return path[0];
 }
 
 // A random open floor point in a room (keeps clear of walls and the counter).

@@ -91,7 +91,7 @@ export interface Request {
   dir?: Dir; // spill swipe direction
 }
 
-export type Target = { t: 'station'; station: StationId } | { t: 'request'; req: number };
+export type Target = { t: 'station'; station: StationId } | { t: 'request'; req: number } | { t: 'kid'; kid: KidId };
 
 export type GestureKind = 'tap' | 'hold' | 'rub' | 'swipe' | 'mash' | 'choice' | 'multi';
 
@@ -592,6 +592,11 @@ export class Sim {
       }
       consider({ t: 'request', req: r.id }, d, 14);
     }
+    // A crying kid takes whatever snack, drink or band-aid Nick is holding.
+    for (const k of KID_IDS) {
+      const a = this.actors[k];
+      if (a.present && a.state === 'crying') consider({ t: 'kid', kid: k }, dist(n.x, n.y, a.x, a.y - 6), 10);
+    }
     const pick = best as { score: number; target: Target; built: Built } | null;
     this.note = pick ? null : (note as { score: number; text: string } | null)?.text ?? null;
     if (!pick) {
@@ -666,6 +671,11 @@ export class Sim {
           return { ...base, req: r.id, kind: 'tap', title: `Check ${STATIONS[s].label.toLowerCase()}`, hint: 'Tap', icon: 'shoe' };
         }
       }
+    }
+    if (t.t === 'kid') {
+      const h = n.hand;
+      if (!h || h === 'nora' || h === 'phone') return `${CAST[t.kid].name} is crying. Bring a snack, a drink or a band-aid.`;
+      return { ...base, kind: 'tap', title: `Give ${CAST[t.kid].name} the ${ITEM_NAMES[h]}`, hint: 'Tap. Stops the crying.', icon: h };
     }
     const r = this.req(t.req);
     if (!r) return '';
@@ -742,12 +752,32 @@ export class Sim {
 
     const h = this.nick.hand;
     const busy = h === 'nora' || h === 'phone';
-    if (target?.t === 'station') {
+    if (target.t === 'kid') {
+      const a = this.actors[target.kid];
+      if (a.state === 'crying' && h && !busy) {
+        a.state = 'idle';
+        a.cryLeft = 0;
+        a.nextReq = this.kidGap(target.kid);
+        this.nick.hand = null;
+        this.chaos = Math.max(0, this.chaos - CHAOS.comfortRefund);
+        this.stats.handled++;
+        this.say(target.kid, target.kid === 'nora' ? '*sniff* Tank you.' : '*sniff* …thanks.', 1.6);
+        this.emit({ type: 'sfx', name: 'good' });
+      }
+    } else if (target?.t === 'station') {
       const s = target.station;
       const item = STATION_ITEM[s];
       if (item) {
         if (busy) this.toast(h === 'phone' ? NICK_LINES.handsFullPhone : NICK_LINES.handsBusy);
-        else this.nick.hand = item;
+        else {
+          this.nick.hand = item;
+          const p = this.req(this.promisedId);
+          if (p) {
+            p.left = Math.max(p.left, p.patience * PATIENCE.promisedTopUp);
+            const who = p.owner as KidId;
+            this.say(who, 'Yay! Dad’s coming!', 1.6);
+          }
+        }
         this.emit({ type: 'sfx', name: 'pop' });
       } else if (s === 'coffee') {
         this.nick.coffee = 1;
@@ -916,16 +946,30 @@ export class Sim {
     }
   }
 
+  // The request Nick is visibly bringing something for: he holds the item it wants
+  // (most urgent one if several). Its timer runs slow ("On my way!").
+  get promisedId(): number | null {
+    const h = this.nick.hand;
+    if (!h || h === 'nora' || h === 'phone') return null;
+    let best: Request | null = null;
+    for (const r of this.requests) {
+      const wants = r.kind === 'booboo' ? 'bandaid' : FETCH_ITEM[r.kind];
+      if (wants === h && (!best || r.left < best.left)) best = r;
+    }
+    return best?.id ?? null;
+  }
+
   private updateRequests(tdt: number) {
     if (tdt <= 0) return;
     const crying = this.cryingKids();
+    const promised = this.promisedId;
     for (const r of [...this.requests]) {
       if (!isFinite(r.left)) continue;
-      let rate = 1;
+      let rate = r.id === promised ? PATIENCE.promisedRate : 1;
       const kids = r.kids ?? (KID_IDS.includes(r.owner as KidId) ? [r.owner as KidId] : []);
       if (kids.length) {
         const others = crying.filter((k) => !kids.includes(k)).length;
-        rate = 1 + PATIENCE.crySpeedupPerKid * others;
+        rate *= 1 + PATIENCE.crySpeedupPerKid * others;
       }
       r.left -= tdt * rate;
       if (r.left <= 0) this.expire(r);
@@ -1368,5 +1412,5 @@ export class Sim {
 }
 
 export function targetKey(t: Target): string {
-  return t.t === 'station' ? `s:${t.station}` : `r:${t.req}`;
+  return t.t === 'station' ? `s:${t.station}` : t.t === 'request' ? `r:${t.req}` : `k:${t.kid}`;
 }

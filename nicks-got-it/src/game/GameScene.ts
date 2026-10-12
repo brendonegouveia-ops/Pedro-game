@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { ABILITIES, COFFEE, KAYLA_OUT_OF_CHARGES } from '../config';
 import { COUCH_POS, ROOM_NAMES, STATIONS, STATION_IDS, type RoomId, type StationId } from '../sim/house';
-import { Sim, type ActorId, type Request, type SimEvent } from '../sim/sim';
+import { REQUEST_LABEL, Sim, type ActorId, type Request, type SimEvent } from '../sim/sim';
 import { CHAR_HEIGHT, drawActor, drawGrill, drawIcon, drawMomFace, drawSpot, drawWorld } from './art';
 import { ACTOR_SCALE, BAR, COLORS, FONT, H, HUD, PANEL, W, WORLD, inWorld, toScreen, toWorld } from './layout';
 import { ActionPanel } from './panel';
@@ -411,7 +411,7 @@ export class GameScene extends Phaser.Scene {
     }
     for (const s of ['highchair', 'playpen', 'door'] as StationId[]) {
       const p = toScreen(STATIONS[s].x, STATIONS[s].y);
-      const off = s === 'door' ? -26 : 20;
+      const off = s === 'door' ? -42 : s === 'highchair' ? -40 : 20;
       this.txt(p.x, p.y + off, STATIONS[s].label, 8, '#22223b', { backgroundColor: '#ffffffaa', padding: { x: 2, y: 1 } })
         .setOrigin(0.5, 0)
         .setDepth(2);
@@ -652,11 +652,30 @@ export class GameScene extends Phaser.Scene {
       ring('highchair', 0xffd166);
       ring('playpen', 0xffd166);
     }
+    // Where to get what someone is asking for (gold), unless Nick already has it.
     const need = new Set(sim.requests.map((r) => r.kind));
-    if (need.has('snack') && sim.nick.hand !== 'snack') ring('snacks', 0xffffff, 0.6);
-    if (need.has('juice_box') && sim.nick.hand !== 'juice_box') ring('juice', 0xffffff, 0.6);
-    if (need.has('sippy_cup') && sim.nick.hand !== 'sippy_cup') ring('sippy', 0xffffff, 0.6);
-    if (need.has('booboo') && sim.nick.hand !== 'bandaid') ring('bandaids', 0xffffff, 0.6);
+    const NEED = 0xffd166;
+    if (need.has('snack') && sim.nick.hand !== 'snack') ring('snacks', NEED);
+    if (need.has('juice_box') && sim.nick.hand !== 'juice_box') ring('juice', NEED);
+    if (need.has('sippy_cup') && sim.nick.hand !== 'sippy_cup') ring('sippy', NEED);
+    if (need.has('booboo') && sim.nick.hand !== 'bandaid') ring('bandaids', NEED);
+    // Who Nick is bringing his item to.
+    const promised = sim.req(sim.promisedId);
+    if (promised) {
+      const a = sim.anchorOf(promised);
+      const p = toScreen(a.x, a.y);
+      g.lineStyle(3, 0x4ea8de, 1).strokeEllipse(p.x, p.y + 2, 36 + pulse * 6, 14 + pulse * 2);
+    }
+    // Crying kids will take whatever Nick is holding.
+    const h = sim.nick.hand;
+    if (h && h !== 'nora' && h !== 'phone') {
+      for (const k of ['evelyn', 'nora', 'tyler'] as const) {
+        const a = sim.actors[k];
+        if (!a.present || a.state !== 'crying') continue;
+        const p = toScreen(a.x, a.y);
+        g.lineStyle(2, 0x4ea8de, 0.7).strokeEllipse(p.x, p.y + 2, 30 + pulse * 4, 12);
+      }
+    }
     if (need.has('thermostat')) ring('thermostat', COLORS.bad);
     if (need.has('needs_out')) ring('door', 0xffd166);
 
@@ -693,6 +712,7 @@ export class GameScene extends Phaser.Scene {
     if (it) {
       let p: Pt | null = null;
       if (it.target.t === 'station') p = toScreen(STATIONS[it.target.station].x, STATIONS[it.target.station].y);
+      else if (it.target.t === 'kid') p = toScreen(sim.actors[it.target.kid].x, sim.actors[it.target.kid].y);
       else {
         const r = sim.req(it.target.req);
         if (r) {
@@ -718,7 +738,12 @@ export class GameScene extends Phaser.Scene {
         bg.fillTriangle(-5, 13, 5, 13, 0, 21);
         const ic = this.add.graphics();
         drawIcon(ic, r.kind, 20);
-        b = { c: this.add.container(target.x, target.y, [bg, ic]).setDepth(30), pos: { ...target } };
+        const label = this.txt(0, 27, REQUEST_LABEL[r.kind].toUpperCase(), 8, '#ffffff', {
+          fontStyle: 'bold',
+          backgroundColor: '#22223bdd',
+          padding: { x: 3, y: 1 },
+        }).setOrigin(0.5, 0);
+        b = { c: this.add.container(target.x, target.y, [bg, ic, label]).setDepth(30), pos: { ...target } };
         b.c.setScale(0.3);
         this.tweens.add({ targets: b.c, scale: 1, duration: 220, ease: 'Back.easeOut' });
         this.bubbles.set(r.id, b);
@@ -726,7 +751,7 @@ export class GameScene extends Phaser.Scene {
       b.pos = approach(b.pos, target, 500, dt);
       b.c.setPosition(b.pos.x, b.pos.y);
       const frac = isFinite(r.left) ? Math.max(0, r.left / r.patience) : 1;
-      const color = !isFinite(r.left) ? COLORS.bad : sim.frozen ? 0x8ecae6 : frac > 0.5 ? COLORS.chaosLo : frac > 0.25 ? COLORS.chaosMid : COLORS.chaosHi;
+      const color = !isFinite(r.left) ? COLORS.bad : sim.frozen ? 0x8ecae6 : r.id === sim.promisedId ? 0x4ea8de : frac > 0.5 ? COLORS.chaosLo : frac > 0.25 ? COLORS.chaosMid : COLORS.chaosHi;
       g.lineStyle(5, 0x22223b, 0.55).strokeCircle(b.pos.x, b.pos.y, 20);
       g.lineStyle(4, color, 1);
       g.beginPath();

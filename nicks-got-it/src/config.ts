@@ -38,20 +38,25 @@ export const PATIENCE = {
   minFactor: 0.5,
   crySpeedupPerKid: 0.2, // each OTHER crying kid speeds your timers up 20%
   // Multipliers on base patience. Fetch / multi-stop jobs get more room.
+  // Walk-there jobs get more room; fetch jobs most of all (counter and back).
   kind: {
-    snack: 1.3,
-    juice_box: 1.3,
-    sippy_cup: 1.3,
-    diaper: 1.0,
-    uppy: 1.0,
-    watch_this: 1.0,
-    booboo: 1.4,
-    lost_shoe: 1.9,
-    screen_time: 1.0,
-    fight: 1.1,
-    spill: 1.5,
-    needs_out: 1.3,
+    snack: 1.7,
+    juice_box: 1.7,
+    sippy_cup: 1.7,
+    diaper: 1.25,
+    uppy: 1.25,
+    watch_this: 1.25,
+    booboo: 1.7,
+    lost_shoe: 2.4,
+    screen_time: 1.25,
+    fight: 1.3,
+    spill: 1.8,
+    needs_out: 1.6,
   },
+  // "On my way": grabbing the item a request wants tops its timer up to this fraction
+  // and slows it to this rate while Nick carries it.
+  promisedTopUp: 0.6,
+  promisedRate: 0.35,
 };
 
 // Gesture sizes. Rub distance is in design px (390-wide canvas); ~1000 px/s is a brisk rub.
@@ -77,6 +82,7 @@ export const CHAOS = {
   meltdownMult: 2, // screen-time "Yes" comes back 60 s later at 2x severity
   dirt: 3,
   earlyDropCry: 4,
+  comfortRefund: 3, // handing a crying kid a snack/drink/band-aid
   smokeAlarm: 15,
   thermostatPerSec: 0.5,
   napWake: 10,

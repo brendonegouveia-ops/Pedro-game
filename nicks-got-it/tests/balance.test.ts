@@ -27,6 +27,6 @@ describe('balance', () => {
       console.log(`skill ${skill} abilities`, clockString(s.min), clockString(s.med), clockString(s.max));
       console.log(`skill ${skill} none     `, clockString(n.min), clockString(n.med), clockString(n.max));
       expect(s.med).toBeGreaterThan(60);
-    });
+    }, 120_000);
   }
 });

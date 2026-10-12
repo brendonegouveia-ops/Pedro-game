@@ -61,7 +61,10 @@ The anti-cheat is a plausibility floor, not real security. A score of N game min
 - **Doing jobs.** Stop next to a kid or a spill (within 40 px), or on a station (within 24 px), and the **Action Panel** slides up with that job. Walking hides it, and walking away skips it. When two things are in reach, a kid's request beats a station, then the nearest wins. With nothing doable in reach, the panel tells you why ("Evelyn wants a snack. Kitchen.").
 - **Commitment.** Once your thumb starts a HOLD, RUB, SWIPE or MASH, Nick is locked in place until you let go (or the taps stop). Every other timer keeps running.
 - **Gestures.** TAP. HOLD: 1.5 s, or 2 s for watch_this. Letting go drains the ring instead of resetting it. RUB: about 1,200 design-px of back-and-forth drag (~1.2 s). SWIPE: one flick in the direction shown. MASH: 7 taps inside 2.2 s.
-- **The house.** The backyard (grill, back door) runs along the top. Below it are the kitchen (counter with coffee, snacks, juice, sippy cups; high chair) and the living room (thermostat, playpen, couch). The garage (band-aids and four shoe hiding spots) is under the kitchen. Doors: kitchen ↔ backyard, living room ↔ backyard (slider), kitchen ↔ living room, kitchen ↔ garage, garage ↔ living room. The whole plan is always on screen, so every request timer stays visible.
+- **The house.** The backyard (grill) runs along the top. Below it the kitchen (counter with coffee, snacks, juice, sippy cups; high chair; back door) and the living room (thermostat, playpen, couch) are one open-plan space. The garage (band-aids and four shoe hiding spots) is under the kitchen. Doorways (64–76 px, drawn as light thresholds with frames): kitchen ↔ backyard, living room ↔ backyard (slider), kitchen ↔ garage, garage ↔ living room. The whole plan is always on screen, so every request timer stays visible.
+- **Pathfinding.** Walkers use A* on an 8 px grid with a 2 px clearance margin, then head for the furthest point on the path they can see. A target on or inside a wall snaps to the nearest open spot.
+- **On my way.** Grabbing the item a kid asked for (snack, juice box, sippy cup, or a band-aid for a boo-boo) tops their timer up to 60% and slows it to 35% speed while Nick carries it; the bubble turns blue and a blue ring marks the kid.
+- **No dead items.** A crying kid takes whatever snack, drink or band-aid Nick holds: stand next to them and tap. The crying stops and Chaos drops by 3.
 - **Hands.** Nick has one free hand: one item, or Nora, or the FaceTime phone. The panel shows what's in it and has a **Put it down** button. The HUD shows it read-only.
 - **Abilities** (bottom bar, keys 1–3): Dad Joke freezes every request and system timer for 3 s, with a 25 s cooldown. It doesn't stop the clock, which is your score. Call Kayla has 2 charges: tap the ability, then a bubble. Her replies go “Sure babe! 💕” → “k”. Because I Said So clears every open screen_time and has a 40 s cooldown.
 - **Desktop keys.** WASD (and arrows, except while a swipe or rub is up) walk. 1–3 abilities. Space/Enter tap, hold or mash. Arrows swipe or rub. Z/X pick choices. U says “uh-huh”. P/Esc pauses.
@@ -75,10 +78,10 @@ Balance as shipped. These are median clock times over 12 seeds, from scripted bo
 | Player | Median end |
 |---|---|
 | Idle (does nothing) | ~11:00 AM |
-| Bot, slow reactions | ~2:30 PM (3:10 PM with abilities) |
-| Bot, instant reactions | ~3:20 PM (4:20 PM with abilities) |
+| Bot, slow reactions | ~3:45 PM (5:00 PM with abilities) |
+| Bot, instant reactions | ~5:15 PM (6:05 PM with abilities) |
 
-Walking is now real travel time (190 px/s; the worst trip, garage to grill, is about 4 s), so the same rules play harder than a tap-to-queue version would. This needs human playtesting: the fastest knobs are `MOVE.speed`, `REQUEST_GAP` and `CHAOS.decayPerSec`.
+Walking is real travel time (190 px/s; the worst trip, garage to grill, is about 4 s), so walk-there jobs get longer timers (`PATIENCE.kind`): ×1.25 for on-the-spot jobs, ×1.7 for fetch jobs and boo-boos, ×2.4 for the lost shoe. This needs human playtesting: the fastest knobs are `MOVE.speed`, `REQUEST_GAP` and `CHAOS.decayPerSec`.
 
 ## Interpretations and deviations from the brief
 
@@ -86,7 +89,7 @@ Walking is now real travel time (190 px/s; the worst trip, garage to grill, is a
 
 - **Haptics.** The brief ends at “Haptics: navigator.vibrate”. Short pulses fire on gesture completion, cries, the smoke alarm, FaceTime and game over, with a toggle in Pause. iOS Safari has no Vibration API, so haptics do nothing on iPhone.
 - **Nap wake-ups use a meter.** A smoke alarm fills it instantly. A bark fills 60 / 35 / 15 depending on how many rooms Eloise is from the couch. A fight in the Living Room or Kitchen adds 18/s while it lasts. The meter drains 5/s, and Nora wakes at 100 (+10 Chaos, cranky until 3:00 PM). So a single bark in the Living Room does not wake her on its own. This keeps the “Shhh” meter meaningful instead of making barks a coin flip.
-- **Patience per request.** Base patience is 8 s, multiplied per request type: ×1.3 for fetch jobs, ×1.4 for boo-boos, ×1.9 for the lost shoe (3 spots), ×1.5 for a spill, ×1.3 for needs_out. It shrinks 6% per game hour, down to a floor of 50%.
+- **Patience per request.** Base patience is 8 s, multiplied per request type: ×1.25 for on-the-spot jobs (diaper, uppy, watch_this, screen_time), ×1.7 for fetch jobs and boo-boos, ×2.4 for the lost shoe (3 spots), ×1.8 for a spill, ×1.6 for needs_out, ×1.3 for a fight. It shrinks 6% per game hour, down to a floor of 50%.
 - **Chaos.** An expired kid request adds +10, and each crying kid adds +0.3/s. Chaos decays 0.25/s while nobody is crying. The decay pauses while the thermostat is wrong, so that event really adds +0.5/s.
 - **Grill.** It runs during the 12:00 lunch rush (until 1:00 PM) and again from 5:00 PM. A flip is due 10 s after the last one, and the burger burns 8 s after that.
 - **Band-aid.** It has to be fetched from the Garage first. Rubbing dirt on it works anywhere, instantly, for +3.

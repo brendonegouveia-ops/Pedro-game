@@ -1,6 +1,6 @@
 // Original procedural art: every character, icon and room is drawn with Graphics primitives.
 import type Phaser from 'phaser';
-import { ROOM_RECTS, WALLS, type Rect } from '../sim/house';
+import { DOORS, ROOM_RECTS, WALLS, type Rect } from '../sim/house';
 
 type G = Phaser.GameObjects.Graphics;
 
@@ -543,20 +543,33 @@ export function drawWorld(g: G, ox: number, oy: number) {
   g.fillStyle(0xdee2e6, 1);
   for (let x = 4; x < 186; x += 30) g.fillRect(X(x), Y(514), 26, 4);
 
-  // Outer walls + interior walls with doorway leaves.
-  g.fillStyle(0x3d2c2e, 1);
-  g.fillRect(X(0), Y(160), 4, 360).fillRect(X(386), Y(160), 4, 360).fillRect(X(0), Y(516), 390, 4);
-  for (const w of WALLS) g.fillRect(X(w.x), Y(w.y), w.w, w.h);
-  g.lineStyle(2, 0x8d5a3b, 1);
-  g.lineBetween(X(60), Y(166), X(60), Y(206)); // back door leaf, open into the kitchen
-  g.lineStyle(1, 0x8d5a3b, 0.6);
-  g.beginPath();
-  g.arc(X(60), Y(166), 40, 0, Math.PI / 2 - 0.25, false);
-  g.strokePath();
-  g.lineStyle(3, 0xbde0fe, 1).lineBetween(X(300), Y(163), X(328), Y(163)); // slider glass
-  g.lineStyle(2, 0x8d5a3b, 0.8).lineBetween(X(188), Y(228), X(168), Y(228));
-  g.lineBetween(X(112), Y(356), X(112), Y(376));
-  g.lineBetween(X(194), Y(440), X(214), Y(440));
+  // Open-plan seam between kitchen and living room: floor runs straight through.
+  g.fillStyle(0xdfe7ef, 1).fillRect(X(188), Y(196), 6, 140);
+  // Doorways first: a light threshold across each opening so it reads as a way through.
+  for (const d of DOORS) {
+    if (d.span > 100) continue; // open plan: no threshold
+    g.fillStyle(0xf3e3c3, 1);
+    if (d.axis === 'h') g.fillRect(X(d.x - d.span / 2), Y(d.y - 6), d.span, 12);
+    else g.fillRect(X(d.x - 6), Y(d.y - d.span / 2), 12, d.span);
+    g.fillStyle(0xd4b483, 1);
+    for (let k = -d.span / 2 + 6; k < d.span / 2 - 2; k += 8) {
+      if (d.axis === 'h') g.fillRect(X(d.x + k), Y(d.y - 4), 3, 8);
+      else g.fillRect(X(d.x - 4), Y(d.y + k), 8, 3);
+    }
+  }
+  // Walls: thick and dark, outer frame included, with a lighter cap line on top.
+  g.fillStyle(0x2b1e20, 1);
+  g.fillRect(X(0), Y(158), 6, 362).fillRect(X(384), Y(158), 6, 362).fillRect(X(0), Y(514), 390, 6);
+  for (const w of WALLS) g.fillRect(X(w.x - 2), Y(w.y - 2), w.w + 4, w.h + 4);
+  g.fillStyle(0x5c4447, 1);
+  for (const w of WALLS) g.fillRect(X(w.x), Y(w.y), w.w, 2);
+  // Door frames: a post at each side of every opening.
+  g.fillStyle(0x8d5a3b, 1);
+  for (const d of DOORS) {
+    const a = d.span / 2;
+    if (d.axis === 'h') g.fillRect(X(d.x - a - 3), Y(d.y - 7), 6, 14).fillRect(X(d.x + a - 3), Y(d.y - 7), 6, 14);
+    else g.fillRect(X(d.x - 7), Y(d.y - a - 3), 14, 6).fillRect(X(d.x - 7), Y(d.y + a - 3), 14, 6);
+  }
 }
 
 export function drawSpot(g: G, s: string, x: number, y: number) {
