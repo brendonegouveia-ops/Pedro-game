@@ -564,12 +564,12 @@ if (!QUICK) await autopilot('cop', '?debug&seed=4245&week=5&start=3&copAt=3.06',
   await pc.waitForFunction(() => window.__pedro.snapshot().cop.phase === 'warn', null, { timeout: 60000, polling: 50 }).catch(() => {});
   let c = await sn();
   const startLines = await pc.evaluate(() => COP_START_LINES);
-  c.cop.siren && c.cop.fx && c.cop.hud === 'COP INCOMING' && c.mirror && /POLICE/.test(c.mirror.label) && startLines.includes(c.speech) && /COP ON YOUR TAIL/.test(c.banner)
-    ? ok(`cop warning: siren on, red/blue flashes, mirror "${c.mirror.label}", HUD "${c.cop.hud}", Pedro: "${c.speech}"`) : fail('cop warning: ' + JSON.stringify({ cop: c.cop, mirror: c.mirror, speech: c.speech, banner: c.banner }));
+  c.cop.siren && c.cop.fx && c.cop.hud === "DON'T HIT ANYTHING" && c.mirror && /POLICE/.test(c.mirror.label) && startLines.includes(c.speech) && !/COP/.test(c.banner)
+    ? ok(`cop warning without a banner over the road: siren, red/blue flashes, mirror "${c.mirror.label}", HUD "${c.cop.hud}", Pedro: "${c.speech}"`) : fail('cop warning: ' + JSON.stringify({ cop: c.cop, mirror: c.mirror, speech: c.speech, banner: c.banner }));
   await pc.waitForFunction(() => window.__pedro.snapshot().cop.phase === 'chase', null, { timeout: 30000, polling: 50 }).catch(() => {});
   c = await sn();
   await pc.screenshot({ path: path.join(outDir, '27-cop-chase.png') });
-  c.cop.phase === 'chase' && c.cop.mult === 1.5 && /OUTRUN THE COP/.test(c.cop.hud) ? ok(`chase on: "${c.cop.hud}", points ×${c.cop.mult}`) : fail('chase: ' + JSON.stringify(c.cop));
+  c.cop.phase === 'chase' && c.cop.mult === 1.5 && /OUTRUN ×1.5/.test(c.cop.hud) ? ok(`chase on: "${c.cop.hud}", points ×${c.cop.mult}`) : fail('chase: ' + JSON.stringify(c.cop));
   // Full Coverage doesn't save you: any hit during the chase = pulled over
   await pc.waitForFunction(() => window.__pedro.snapshot().effect < 0, null, { timeout: 30000, polling: 50 }).catch(() => {});
   await pc.evaluate(() => window.__pedro.grant(0));

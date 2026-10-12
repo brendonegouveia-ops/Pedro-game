@@ -97,10 +97,10 @@
   @keyframes mirrorPulse { 50% { transform: scale(1.06); } }
   @keyframes laneFlash { 50% { background: rgba(255,40,30,0.25); } }
 
-  #hudPower { display: flex; justify-content: center; gap: 8px; margin-top: 8px; }
+  #hudPower { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 8px; }
   .power {
     display: flex; align-items: center; gap: 8px; background: rgba(10,12,22,0.6); border-radius: 999px;
-    padding: 5px 12px 5px 6px; font-weight: 900; font-size: 13px; letter-spacing: 0.06em; border: 2px solid var(--pc);
+    padding: 5px 12px 5px 6px; font-weight: 900; font-size: 13px; letter-spacing: 0.06em; border: 2px solid var(--pc); white-space: nowrap;
     box-shadow: 0 0 14px color-mix(in srgb, var(--pc) 55%, transparent);
   }
   .power .dot { width: 22px; height: 22px; border-radius: 50%; background: var(--pc); display: grid; place-items: center; font-size: 13px; }
@@ -240,6 +240,8 @@
     0% { background: radial-gradient(ellipse at 0% 100%, rgba(255,30,40,0.5), transparent 55%); }
     50% { background: radial-gradient(ellipse at 100% 100%, rgba(40,90,255,0.5), transparent 55%); }
   }
+  #hudCop.warn { animation: copPill 0.5s steps(1) infinite; }
+  @keyframes copPill { 50% { border-color: #ff2030; box-shadow: 0 0 14px rgba(255,32,48,0.7); } }
   #mirror .mcop { position: absolute; left: 0; bottom: 3px; width: 16px; height: 12px; border-radius: 4px; display: none;
     border: 2px solid #fff; box-sizing: border-box; animation: mcop 0.5s steps(1) infinite; }
   #mirror.cop .mcop { display: block; }
@@ -4065,8 +4067,7 @@ function startChase(dur) {
   copCar.x = player.x; copCar.z = 40; copCar.group.visible = true;
   Sfx.siren(true);
   ui.copFx.classList.add('on');
-  showBanner('🚨 Cop on your tail', "Don't hit anything", "Hit anything and you're pulled over. Fresh Detail still saves you.", 2.6);
-  say(pickLine(COP_START_LINES, 'cop'), true);
+  say(pickLine(COP_START_LINES, 'cop'));          // the HUD pill carries the rule; no banner over the road
 }
 function endChase(escaped) {
   const cp = game.cop;
@@ -4117,8 +4118,9 @@ function updateCop(dtGame, realDt) {
   const hc = cp.phase === 'chase' ? Math.ceil((1 - cp.t / cp.dur) * 100) : cp.phase === 'warn' ? 101 : -1;
   if (hc !== hudCache.cop) {
     if ((hc >= 0) !== (hudCache.cop >= 0)) ui.hudCop.classList.toggle('hidden', hc < 0);
-    if (hc === 101) { ui.hudCopTxt.textContent = 'COP INCOMING'; ui.hudCopBar.style.transform = 'scaleX(1)'; }
-    else if (hc >= 0) { if (hudCache.cop === 101 || hudCache.cop < 0) ui.hudCopTxt.textContent = 'OUTRUN THE COP ×' + C.copScoreMult; ui.hudCopBar.style.transform = 'scaleX(' + (hc / 100) + ')'; }
+    ui.hudCop.classList.toggle('warn', hc === 101);
+    if (hc === 101) { ui.hudCopTxt.textContent = "DON'T HIT ANYTHING"; ui.hudCopBar.style.transform = 'scaleX(1)'; }
+    else if (hc >= 0) { if (hudCache.cop === 101 || hudCache.cop < 0) ui.hudCopTxt.textContent = 'OUTRUN ×' + C.copScoreMult; ui.hudCopBar.style.transform = 'scaleX(' + (hc / 100) + ')'; }
     hudCache.cop = hc;
   }
   // The car: closes in from behind, tails Pedro's lane with a lag, drops back when lost, pulls alongside when he's caught
