@@ -1,16 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import { CHAOS, FACETIME, KAYLA_CALL_REPLIES, MOVE, QUEUE_MAX, UPPY } from '../src/config';
-import { hops, route } from '../src/sim/house';
+import { CHAOS, FACETIME, KAYLA_CALL_REPLIES, MOVE, UPPY } from '../src/config';
+import { ROOM_IDS, ROOM_RECTS, STATIONS, STATION_IDS, WALLS, blocked, dist, hops, roomPath, type StationId } from '../src/sim/house';
 import { Sim, clockString, type Request } from '../src/sim/sim';
 
 const step = (sim: Sim, sec: number, dt = 1 / 60) => {
   for (let t = 0; t < sec; t += dt) sim.update(dt);
 };
 
+// Hold a finger on (x, y) until Nick arrives, then let go (one frame to settle).
+function walkTo(sim: Sim, x: number, y: number, max = 10) {
+  sim.setMoveTarget({ x, y });
+  let t = 0;
+  while (t < max && dist(sim.nick.x, sim.nick.y, x, y) > 6) {
+    sim.update(1 / 60);
+    t += 1 / 60;
+  }
+  sim.setMoveTarget(null);
+  sim.update(1 / 60);
+  return t;
+}
+const walkToStation = (sim: Sim, s: StationId) => walkTo(sim, STATIONS[s].x, STATIONS[s].y);
+
 // A sim with nobody making requests, so a test can set up exactly what it needs.
 function quiet(seed = 1): Sim {
   const sim = new Sim(seed);
-  for (const a of Object.values(sim.actors)) a.nextReq = 1e9;
+  for (const a of Object.values(sim.actors)) {
+    a.nextReq = 1e9;
+    a.nextWander = 1e9;
+    a.dest = null;
+  }
   sim.thermostatAt = Infinity;
   sim.nextAmbient = Infinity;
   sim.dog.nextAction = 1e9;
@@ -24,6 +42,13 @@ function inject(sim: Sim, r: Partial<Request> & Pick<Request, 'kind' | 'owner' |
   return req;
 }
 
+// Put a kid somewhere in the living room and stand Nick next to them.
+function kidHere(sim: Sim, id: 'evelyn' | 'nora' | 'tyler', x = 300, y = 300) {
+  Object.assign(sim.actors[id], { present: true, x, y, room: 'living', state: 'idle', dest: null });
+  sim.nick.x = x + 20;
+  sim.nick.y = y;
+}
+
 describe('clock', () => {
   it('formats game minutes', () => {
     expect(clockString(0)).toBe('9:00 AM');
@@ -35,74 +60,88 @@ describe('clock', () => {
 });
 
 describe('house', () => {
-  it('diagonals are two hops through a neighbor', () => {
-    expect(hops('kitchen', 'backyard')).toBe(2);
-    expect(hops('garage', 'living')).toBe(2);
-    expect(route('kitchen', 'backyard')).toEqual(['living', 'backyard']);
+  it('rooms connect through doorways; garage to backyard is two hops', () => {
+    expect(hops('garage', 'backyard')).toBe(2);
     expect(hops('kitchen', 'living')).toBe(1);
+    expect(roomPath('garage', 'backyard').length).toBe(2);
   });
 
-  it('walking a diagonal takes 2 x 0.5 s, and 40% slower on low coffee', () => {
-    const sim = quiet();
-    sim.nick.room = 'kitchen';
-    sim.tapRoom('backyard');
-    step(sim, 2 * MOVE.hopSec - 0.05);
-    expect(sim.nick.room).not.toBe('backyard');
-    step(sim, 0.1);
-    expect(sim.nick.room).toBe('backyard');
+  it('walls block', () => {
+    for (const w of WALLS) expect(blocked(w.x + w.w / 2, w.y + w.h / 2, MOVE.radius)).toBe(true);
+  });
 
-    const slow = quiet();
-    slow.nick.room = 'kitchen';
-    slow.nick.coffee = 0.2;
-    slow.tapRoom('living');
-    step(slow, MOVE.hopSec + 0.05);
-    expect(slow.nick.room).toBe('kitchen');
-    step(slow, MOVE.hopSec / MOVE.lowCoffeeSpeed - MOVE.hopSec);
-    expect(slow.nick.room).toBe('living');
+  it('Nick can walk from every room to every station', () => {
+    for (const r of ROOM_IDS)
+      for (const s of STATION_IDS) {
+        const sim = quiet();
+        const R = ROOM_RECTS[r];
+        sim.nick.x = R.x + R.w / 2;
+        sim.nick.y = R.y + R.h / 2;
+        const t = walkToStation(sim, s);
+        expect(t, `${r} -> ${s}`).toBeLessThan(6);
+      }
+  });
+
+  it('low coffee makes Nick 40% slower', () => {
+    const a = quiet();
+    const b = quiet();
+    b.nick.coffee = 0.2;
+    const ta = walkTo(a, 300, 480);
+    const tb = walkTo(b, 300, 480);
+    expect(tb / ta).toBeCloseTo(1 / MOVE.lowCoffeeSpeed, 1);
   });
 });
 
-describe('queue', () => {
-  it('caps at 4 and a second tap cancels', () => {
+describe('jobs', () => {
+  it('stopping next to a station offers its job; walking hides it', () => {
     const sim = quiet();
-    expect(sim.tapStation('coffee')).toBe(true);
-    sim.tapStation('snacks');
-    sim.tapStation('grill');
-    sim.tapRoom('garage');
-    expect(sim.queue.length).toBe(QUEUE_MAX);
-    expect(sim.tapStation('door')).toBe(false);
-    sim.tapStation('snacks');
-    expect(sim.queue.length).toBe(3);
+    walkToStation(sim, 'snacks');
+    expect(sim.interaction?.title).toMatch(/Grab snack/);
+    sim.setMoveTarget({ x: 300, y: 300 });
+    sim.update(1 / 60);
+    expect(sim.interaction).toBe(null);
   });
 
-  it('a fetch request queues the kitchen first, then the delivery', () => {
+  it('fetch: grab at the counter, deliver at the kid', () => {
     const sim = quiet();
+    kidHere(sim, 'evelyn', 300, 300);
     const r = inject(sim, { kind: 'snack', owner: 'evelyn', room: 'living' });
-    sim.tapRequest(r.id);
-    expect(sim.queue.map((q) => q.target)).toEqual([
-      { t: 'station', station: 'snacks' },
-      { t: 'request', req: r.id },
-    ]);
-    step(sim, 0.6);
-    expect(sim.interaction?.title).toMatch(/Grab snack/);
+    sim.update(1 / 60);
+    expect(sim.interaction).toBe(null);
+    expect(sim.note).toMatch(/snack/);
+    walkToStation(sim, 'snacks');
     sim.completeGesture();
     expect(sim.nick.hand).toBe('snack');
-    step(sim, 0.6);
+    walkTo(sim, 320, 300);
     expect(sim.interaction?.req).toBe(r.id);
     sim.completeGesture();
     expect(sim.requests).not.toContain(r);
     expect(sim.nick.hand).toBe(null);
   });
 
-  it('other timers keep running during a gesture', () => {
+  it('engaged in a gesture: Nick cannot move, other timers keep running', () => {
     const sim = quiet();
-    const a = inject(sim, { kind: 'diaper', owner: 'nora', room: 'living' });
-    const b = inject(sim, { kind: 'watch_this', owner: 'evelyn', room: 'living' });
-    sim.tapRequest(a.id);
-    step(sim, 0.1);
+    kidHere(sim, 'nora', 300, 300);
+    inject(sim, { kind: 'diaper', owner: 'nora', room: 'living' });
+    const b = inject(sim, { kind: 'snack', owner: 'evelyn', room: 'kitchen', left: 8 });
+    sim.update(1 / 60);
     expect(sim.interaction?.kind).toBe('hold');
-    step(sim, 2);
-    expect(b.left).toBeLessThan(6.2);
+    sim.engage(true);
+    const x = sim.nick.x;
+    sim.setMoveTarget({ x: 20, y: 20 });
+    step(sim, 1);
+    expect(sim.nick.x).toBe(x);
+    expect(b.left).toBeLessThan(7.1);
+  });
+
+  it('watch_this works from anywhere in the same room', () => {
+    const sim = quiet();
+    kidHere(sim, 'evelyn', 230, 480);
+    sim.nick.x = 360;
+    sim.nick.y = 200;
+    inject(sim, { kind: 'watch_this', owner: 'evelyn', room: 'living' });
+    sim.update(1 / 60);
+    expect(sim.interaction?.kind).toBe('hold');
   });
 });
 
@@ -123,9 +162,9 @@ describe('requests', () => {
 
   it('screen time: Yes melts down 60 s later at 2x', () => {
     const sim = quiet();
-    const r = inject(sim, { kind: 'screen_time', owner: 'evelyn', room: 'living' });
-    sim.tapRequest(r.id);
-    step(sim, 0.05);
+    kidHere(sim, 'evelyn');
+    inject(sim, { kind: 'screen_time', owner: 'evelyn', room: 'living' });
+    sim.update(1 / 60);
     sim.choose(0);
     expect(sim.chaos).toBe(0);
     step(sim, 59);
@@ -137,9 +176,9 @@ describe('requests', () => {
 
   it('booboo: dirt is instant +3, band-aid needs one in hand then RUB', () => {
     const sim = quiet();
+    kidHere(sim, 'evelyn');
     const r = inject(sim, { kind: 'booboo', owner: 'evelyn', room: 'living' });
-    sim.tapRequest(r.id);
-    step(sim, 0.05);
+    sim.update(1 / 60);
     expect(sim.interaction?.options?.[0].enabled).toBe(false);
     sim.choose(1);
     expect(sim.chaos).toBe(CHAOS.dirt);
@@ -147,23 +186,24 @@ describe('requests', () => {
 
     const s2 = quiet();
     s2.nick.hand = 'bandaid';
+    kidHere(s2, 'evelyn');
     const r2 = inject(s2, { kind: 'booboo', owner: 'evelyn', room: 'living' });
-    s2.tapRequest(r2.id);
-    step(s2, 0.05);
+    s2.update(1 / 60);
     s2.choose(0);
+    s2.update(1 / 60); // focus keeps the rub (same job) instead of rebuilding the choice
     expect(s2.interaction?.kind).toBe('rub');
     s2.completeGesture();
     expect(s2.requests).not.toContain(r2);
     expect(s2.nick.hand).toBe(null);
   });
 
-  it('lost shoe queues its 3 garage spots and resolves on the third', () => {
+  it('lost shoe: check its 3 garage spots; the third has it', () => {
     const sim = quiet();
     const r = inject(sim, { kind: 'lost_shoe', owner: 'evelyn', room: 'living', spots: ['spot_bin', 'spot_cooler', 'spot_bike'], checked: [], left: 50, patience: 50 });
-    sim.tapRequest(r.id);
-    expect(sim.queue.length).toBe(3);
-    for (let i = 0; i < 3; i++) {
-      step(sim, 1.1);
+    walkToStation(sim, 'spot_toolbox');
+    expect(sim.interaction).toBe(null); // not one of this shoe's spots
+    for (const s of ['spot_bin', 'spot_cooler', 'spot_bike'] as const) {
+      walkToStation(sim, s);
       expect(sim.interaction?.kind).toBe('tap');
       sim.completeGesture();
     }
@@ -174,17 +214,14 @@ describe('requests', () => {
     let cried = 0;
     for (let seed = 1; seed <= 200; seed++) {
       const sim = quiet(seed);
-      sim.actors.nora.present = true;
-      const r = inject(sim, { kind: 'uppy', owner: 'nora', room: 'living' });
-      sim.tapRequest(r.id);
-      step(sim, 0.05);
+      kidHere(sim, 'nora');
+      inject(sim, { kind: 'uppy', owner: 'nora', room: 'living' });
+      sim.update(1 / 60);
       sim.completeGesture();
       expect(sim.nick.hand).toBe('nora');
-      sim.tapStation('snacks');
-      step(sim, 0.6);
+      walkToStation(sim, 'snacks');
       expect(sim.interaction).toBe(null); // can't grab with Nora on the hip
-      sim.tapStation('highchair');
-      step(sim, 0.1);
+      walkToStation(sim, 'highchair');
       sim.completeGesture();
       expect(sim.nick.hand).toBe(null);
       if (sim.actors.nora.state === 'crying') cried++;
@@ -261,8 +298,7 @@ describe('systems', () => {
     sim.chaos = 50;
     step(sim, 4);
     expect(sim.chaos).toBeCloseTo(52, 0);
-    sim.tapStation('thermostat');
-    step(sim, 0.05);
+    walkToStation(sim, 'thermostat');
     expect(sim.interaction?.kind).toBe('swipe');
     sim.completeGesture();
     expect(sim.requests.some((r) => r.kind === 'thermostat')).toBe(false);

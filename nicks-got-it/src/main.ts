@@ -177,6 +177,7 @@ function pause() {
   if (!playing || paused || !scene.running) return;
   paused = true;
   scene.running = false;
+  scene.releaseInput(); // a held finger or key must not keep Nick walking after resume
   suspendAudio();
   open('pause');
 }

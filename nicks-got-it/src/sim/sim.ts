@@ -21,7 +21,6 @@ import {
   NAP,
   NICK_LINES,
   PATIENCE,
-  QUEUE_MAX,
   RATE_AFTER_3PM_PER_HOUR,
   REQUEST_GAP,
   REQUEST_WEIGHTS,
@@ -35,11 +34,17 @@ import {
 import {
   COUCH_POS,
   DOOR_WAIT_POS,
+  NICK_START,
   SHOE_SPOTS,
   STATIONS,
+  STATION_IDS,
+  dist,
+  floorPoint,
   hops,
+  moveCircle,
   neighbors,
-  nextHop,
+  roomAt,
+  steer,
   type RoomId,
   type StationId,
 } from './house';
@@ -81,20 +86,12 @@ export interface Request {
   spots?: StationId[]; // lost_shoe
   checked?: StationId[];
   culprit?: ActorId; // thermostat
-  x?: number; // spill position inside its room
+  x?: number; // spill position (world)
   y?: number;
   dir?: Dir; // spill swipe direction
 }
 
-export type Target =
-  | { t: 'room'; room: RoomId }
-  | { t: 'station'; station: StationId; req?: number }
-  | { t: 'request'; req: number };
-
-export interface QueueItem {
-  id: number;
-  target: Target;
-}
+export type Target = { t: 'station'; station: StationId } | { t: 'request'; req: number };
 
 export type GestureKind = 'tap' | 'hold' | 'rub' | 'swipe' | 'mash' | 'choice' | 'multi';
 
@@ -107,7 +104,8 @@ export interface ChoiceOption {
 
 export interface Interaction {
   id: number;
-  qid: number;
+  key: string; // identifies target + context; same key = same job, keep its state
+  target: Target;
   req?: number;
   kind: GestureKind;
   title: string;
@@ -134,6 +132,7 @@ export interface Actor {
   nextReq: number;
   nextWander: number;
   meltdownAt: number | null;
+  dest: { x: number; y: number } | null; // walking toward
   speech: string | null;
   speechLeft: number;
 }
@@ -189,12 +188,6 @@ const STATION_ITEM: Partial<Record<StationId, ItemId>> = {
   sippy: 'sippy_cup',
   bandaids: 'bandaid',
 };
-const ITEM_STATION: Record<ItemId, StationId> = {
-  snack: 'snacks',
-  juice_box: 'juice',
-  sippy_cup: 'sippy',
-  bandaid: 'bandaids',
-};
 
 export const REQUEST_LABEL: Record<RequestKind, string> = {
   diaper: 'Diaper',
@@ -213,9 +206,7 @@ export const REQUEST_LABEL: Record<RequestKind, string> = {
   thermostat: 'Thermostat',
 };
 
-function floorPos(rng: Rng): { x: number; y: number } {
-  return { x: rng.range(0.36, 0.9), y: rng.range(0.66, 0.86) };
-}
+type Built = Omit<Interaction, 'id' | 'key'>;
 
 export function clockString(t: number): string {
   const total = GAME.startHour * 60 + Math.floor(t);
@@ -245,8 +236,11 @@ export class Sim {
   };
 
   nick = {
+    x: NICK_START.x,
+    y: NICK_START.y,
     room: 'living' as RoomId,
-    hop: null as { from: RoomId; to: RoomId; p: number; dur: number } | null,
+    moving: false,
+    facing: 1,
     hand: null as Hand,
     pocket: null as ItemId | null,
     carryLeft: 0,
@@ -255,8 +249,15 @@ export class Sim {
 
   actors: Record<ActorId, Actor>;
   requests: Request[] = [];
-  queue: QueueItem[] = [];
+  // The job Nick is standing next to (shown in the Action Panel). Only offered while he isn't walking.
   interaction: Interaction | null = null;
+  // Nothing doable in reach, but something worth saying ("Need a snack first.").
+  note: string | null = null;
+  // Movement input: walk toward a world point (touch / mouse held) or along a direction (keys).
+  moveTo: { x: number; y: number } | null = null;
+  moveDir: { x: number; y: number } | null = null;
+  // True while the player's thumb is mid-gesture in the panel: Nick is locked in place.
+  engaged = false;
 
   freezeLeft = 0;
   jokeCd = 0;
@@ -287,7 +288,7 @@ export class Sim {
   constructor(seed = Date.now()) {
     this.rng = new Rng(seed);
     const mk = (id: ActorId, room: RoomId, present: boolean): Actor => {
-      const p = floorPos(this.rng);
+      const p = floorPoint(this.rng, room);
       return {
         id,
         present,
@@ -300,6 +301,7 @@ export class Sim {
         nextReq: FIRST_REQUEST_SEC,
         nextWander: this.rng.range(...WANDER.gapSec),
         meltdownAt: null,
+        dest: null,
         speech: null,
         speechLeft: 0,
       };
@@ -339,15 +341,25 @@ export class Sim {
   req(id: number | undefined | null): Request | undefined {
     return id == null ? undefined : this.requests.find((r) => r.id === id);
   }
-  // Room Nick has to stand in for a target (null = target is gone).
-  targetRoom(t: Target): RoomId | null {
-    if (t.t === 'room') return t.room;
-    if (t.t === 'station') return STATIONS[t.station].room;
-    const r = this.req(t.req);
-    return r ? r.room : null;
+  get steering(): boolean {
+    return !!(this.moveTo || this.moveDir);
   }
-  isQueued(t: Target): QueueItem | undefined {
-    return this.queue.find((q) => sameTarget(q.target, t));
+
+  // The point a request is "at": the kid, the spill, or its station.
+  anchorOf(r: Request): { x: number; y: number } {
+    switch (r.kind) {
+      case 'flip':
+        return STATIONS.grill;
+      case 'thermostat':
+        return STATIONS.thermostat;
+      case 'needs_out':
+        return STATIONS.door;
+      case 'spill':
+        return { x: r.x ?? 0, y: r.y ?? 0 };
+    }
+    const kids = (r.kids ?? [r.owner]) as ActorId[];
+    const ps = kids.map((k) => this.actors[k]);
+    return { x: ps.reduce((s, a) => s + a.x, 0) / ps.length, y: ps.reduce((s, a) => s + a.y, 0) / ps.length };
   }
 
   // ------------------------------------------------------------ events
@@ -441,14 +453,15 @@ export class Sim {
     this.once('nora', TIMELINE.noraJoins, () => {
       const n = this.actors.nora;
       n.present = true;
+      Object.assign(n, floorPoint(this.rng, 'living'));
       n.room = 'living';
-      Object.assign(n, floorPos(this.rng));
       n.nextReq = 5;
       this.text(TEXTS.noraJoins);
     });
     this.once('dog', TIMELINE.dogJoins, () => {
       const d = this.actors.eloise;
       d.present = true;
+      Object.assign(d, floorPoint(this.rng, 'garage'));
       d.room = 'garage';
       this.dog.nextAction = 6;
       this.text(TEXTS.dogJoins);
@@ -460,8 +473,9 @@ export class Sim {
     this.once('tyler', TIMELINE.tylerJoins, () => {
       const ty = this.actors.tyler;
       ty.present = true;
+      Object.assign(ty, { x: 200, y: 24 });
+      ty.dest = floorPoint(this.rng, 'backyard');
       ty.room = 'backyard';
-      Object.assign(ty, floorPos(this.rng));
       ty.nextReq = 8;
       this.text(TEXTS.tyler);
       this.say('tyler', 'Hi Mr. Nick!');
@@ -485,145 +499,109 @@ export class Sim {
     }
   }
 
-  // ------------------------------------------------------------ Nick + queue
+  // ------------------------------------------------------------ Nick
+  setMoveTarget(p: { x: number; y: number } | null) {
+    this.moveTo = p;
+    if (p) this.moveDir = null;
+  }
+
+  setMoveDir(d: { x: number; y: number } | null) {
+    this.moveDir = d && (d.x || d.y) ? d : null;
+    if (this.moveDir) this.moveTo = null;
+  }
+
+  // Panel: the thumb went down on (or left) a gesture. Engaged = locked in place.
+  engage(on: boolean) {
+    this.engaged = on && !!this.interaction;
+  }
+
   private updateNick(dt: number, tdt: number) {
     const n = this.nick;
     if (n.hand === 'nora') {
       n.carryLeft -= tdt;
-      if (n.carryLeft <= 0) this.setDownNora(n.room, false);
+      if (n.carryLeft <= 0) this.setDownNora(false);
     }
 
-    if (n.hop) {
-      n.hop.p += dt / n.hop.dur;
-      if (n.hop.p >= 1) {
-        n.room = n.hop.to;
-        n.hop = null;
-        if (this.nick.hand === 'nora') this.actors.nora.room = n.room;
-      } else return;
-    }
-    if (this.interaction) return;
-
-    while (this.queue.length && !this.interaction && !n.hop) {
-      const q = this.queue[0];
-      const room = this.targetRoom(q.target);
-      if (room == null) {
-        this.queue.shift();
-        continue;
-      }
-      if (room !== n.room) {
-        n.hop = { from: n.room, to: nextHop(n.room, room), p: 0, dur: MOVE.hopSec / this.walkSpeed() };
-        return;
-      }
-      if (q.target.t === 'room') {
-        this.queue.shift();
-        continue;
-      }
-      const built = this.buildInteraction(q);
-      if (typeof built === 'string') {
-        this.queue.shift();
-        this.toast(built);
-        continue;
-      }
-      this.interaction = built;
-      this.emit({ type: 'sfx', name: 'pop' });
-    }
-  }
-
-  // Input: tap a request bubble (or the kid / dog wearing it).
-  tapRequest(id: number): boolean {
-    const r = this.req(id);
-    if (!r || this.over) return false;
-    // Requests that are resolved at a station queue that station instead.
-    if (r.kind === 'lost_shoe') {
-      const spots = (r.spots ?? []).filter((s) => !r.checked?.includes(s));
-      const queued = spots.filter((s) => this.isQueued({ t: 'station', station: s }));
-      if (queued.length === spots.length && spots.length) {
-        for (const s of spots) this.cancelTarget({ t: 'station', station: s });
-        return true;
-      }
-      let added = false;
-      for (const s of spots) {
-        if (this.isQueued({ t: 'station', station: s })) continue;
-        if (!this.enqueue({ t: 'station', station: s, req: r.id })) break;
-        added = true;
-      }
-      return added;
-    }
-    if (r.kind === 'needs_out') return this.toggle({ t: 'station', station: 'door', req: r.id });
-    if (r.kind === 'flip') return this.toggle({ t: 'station', station: 'grill', req: r.id });
-    if (r.kind === 'thermostat') return this.toggle({ t: 'station', station: 'thermostat', req: r.id });
-
-    const target: Target = { t: 'request', req: id };
-    if (this.isQueued(target)) {
-      this.cancelTarget(target);
-      return true;
-    }
-    const item = FETCH_ITEM[r.kind];
-    if (item && this.nick.hand !== item) {
-      const st: Target = { t: 'station', station: ITEM_STATION[item] };
-      if (!this.isQueued(st)) {
-        if (this.queue.length + 2 > QUEUE_MAX) {
-          this.toast(NICK_LINES.queueFull);
-          return false;
+    n.moving = false;
+    if (!this.engaged && this.steering) {
+      let dx = 0;
+      let dy = 0;
+      let maxStep = Infinity;
+      if (this.moveDir) {
+        dx = this.moveDir.x;
+        dy = this.moveDir.y;
+      } else if (this.moveTo) {
+        const t = this.moveTo;
+        if (dist(n.x, n.y, t.x, t.y) > 4) {
+          const w = steer(n.x, n.y, t.x, t.y, MOVE.radius);
+          dx = w.x - n.x;
+          dy = w.y - n.y;
+          maxStep = Math.hypot(dx, dy);
         }
-        this.enqueue(st);
+      }
+      const len = Math.hypot(dx, dy);
+      if (len > 0.001) {
+        const step = Math.min(MOVE.speed * this.walkSpeed() * dt, maxStep);
+        const p = moveCircle(n.x, n.y, (dx / len) * step, (dy / len) * step, MOVE.radius);
+        n.moving = Math.hypot(p.x - n.x, p.y - n.y) > 0.01;
+        if (Math.abs(p.x - n.x) > 0.05) n.facing = p.x < n.x ? -1 : 1;
+        n.x = p.x;
+        n.y = p.y;
       }
     }
-    return this.enqueue(target);
-  }
-
-  tapStation(s: StationId): boolean {
-    return this.toggle({ t: 'station', station: s });
-  }
-
-  tapRoom(room: RoomId): boolean {
-    return this.toggle({ t: 'room', room });
-  }
-
-  tapActor(id: ActorId): boolean {
-    const a = this.actors[id];
-    if (!a.present) return false;
-    if (a.req != null) return this.tapRequest(a.req);
-    if (id === 'eloise') {
-      const r = this.requests.find((q) => q.kind === 'needs_out');
-      if (r) return this.tapRequest(r.id);
+    n.room = roomAt(n.x, n.y);
+    if (n.hand === 'nora') {
+      const no = this.actors.nora;
+      no.x = n.x;
+      no.y = n.y;
+      no.room = n.room;
     }
-    if (a.state === 'carried') return false;
-    return this.tapRoom(a.room);
+    if (!this.engaged) this.updateFocus();
   }
 
-  private toggle(t: Target): boolean {
-    if (this.over) return false;
-    if (this.isQueued(t)) {
-      this.cancelTarget(t);
-      return true;
+  // Pick the job Nick is standing next to. Requests win ties against stations.
+  private updateFocus() {
+    if (this.over) return;
+    if (this.steering) {
+      this.interaction = null;
+      this.note = null;
+      return;
     }
-    return this.enqueue(t);
-  }
-
-  private enqueue(t: Target): boolean {
-    if (this.queue.length >= QUEUE_MAX) {
-      this.toast(NICK_LINES.queueFull);
-      this.emit({ type: 'sfx', name: 'bad' });
-      return false;
+    const n = this.nick;
+    let best: { score: number; target: Target; built: Built } | null = null;
+    let note: { score: number; text: string } | null = null;
+    const consider = (target: Target, d: number, bonus: number, reach = MOVE.reach) => {
+      if (d > reach) return;
+      const built = this.build(target);
+      const score = d - bonus;
+      if (typeof built === 'string') {
+        if (!note || score < note.score) note = { score, text: built };
+      } else if (!best || score < best.score) best = { score, target, built };
+    };
+    for (const s of STATION_IDS)
+      consider({ t: 'station', station: s }, dist(n.x, n.y, STATIONS[s].x, STATIONS[s].y), 0, MOVE.stationReach);
+    for (const r of this.requests) {
+      if (r.kind === 'flip' || r.kind === 'thermostat' || r.kind === 'needs_out' || r.kind === 'lost_shoe') continue;
+      let d: number;
+      if (r.kind === 'spill') d = dist(n.x, n.y, r.x ?? 0, r.y ?? 0);
+      else {
+        const kids = (r.kids ?? [r.owner]) as ActorId[];
+        d = Math.min(...kids.map((k) => dist(n.x, n.y, this.actors[k].x, this.actors[k].y - 6)));
+        // "Watch this!" only needs Nick in the same room.
+        if (r.kind === 'watch_this' && this.actors[r.owner as ActorId].room === n.room) d = Math.min(d, MOVE.reach);
+      }
+      consider({ t: 'request', req: r.id }, d, 14);
     }
-    this.queue.push({ id: this.nextId++, target: t });
-    this.emit({ type: 'sfx', name: 'tap' });
-    this.emit({ type: 'haptic', pattern: 8 });
-    return true;
-  }
-
-  cancelTarget(t: Target) {
-    const q = this.isQueued(t);
-    if (q) this.cancelQueue(q.id);
-  }
-
-  cancelQueue(qid: number) {
-    const i = this.queue.findIndex((q) => q.id === qid);
-    if (i < 0) return;
-    this.queue.splice(i, 1);
-    if (this.interaction?.qid === qid) this.interaction = null;
-    this.emit({ type: 'sfx', name: 'tap' });
+    const pick = best as { score: number; target: Target; built: Built } | null;
+    this.note = pick ? null : (note as { score: number; text: string } | null)?.text ?? null;
+    if (!pick) {
+      this.interaction = null;
+      return;
+    }
+    const key = `${targetKey(pick.target)}|${n.hand}`;
+    if (this.interaction?.key === key) return; // same job: keep its progress (fight taps, band-aid rub)
+    this.interaction = { ...pick.built, id: this.nextId++, key };
+    this.emit({ type: 'sfx', name: 'pop' });
   }
 
   dropHand(): boolean {
@@ -635,10 +613,10 @@ export class Sim {
   }
 
   // ------------------------------------------------------------ interactions
-  private buildInteraction(q: QueueItem): Interaction | string {
-    const base = { id: this.nextId++, qid: q.id };
+  // What Nick can do at a target right now, or why not (a string).
+  build(t: Target): Built | string {
     const n = this.nick;
-    const t = q.target;
+    const base = { target: t };
     if (t.t === 'station') {
       const s = t.station;
       const item = STATION_ITEM[s];
@@ -650,10 +628,11 @@ export class Sim {
       }
       switch (s) {
         case 'coffee':
+          if (n.coffee > 0.9) return 'Still got coffee.';
           return { ...base, kind: 'hold', title: 'Refill coffee', hint: 'Hold', icon: 'coffee', holdSec: GESTURES.coffeeHoldSec };
         case 'highchair':
         case 'playpen':
-          if (n.hand !== 'nora') return 'Nobody to put in it.';
+          if (n.hand !== 'nora') return '';
           return { ...base, kind: 'tap', title: `Nora → ${STATIONS[s].label.toLowerCase()}`, hint: 'Tap', icon: 'nora' };
         case 'thermostat': {
           const r = this.requests.find((x) => x.kind === 'thermostat');
@@ -676,21 +655,20 @@ export class Sim {
         }
         case 'door': {
           const r = this.requests.find((x) => x.kind === 'needs_out');
-          if (!r) return NICK_LINES.doorIdle;
-          return { ...base, req: r.id, kind: 'hold', title: 'Let Eloise out', hint: 'Hold', icon: 'door', holdSec: GESTURES.doorHoldSec };
+          if (!r) return '';
+          return { ...base, req: r.id, kind: 'hold', title: 'Let Eloise out', hint: 'Hold the door', icon: 'door', holdSec: GESTURES.doorHoldSec };
         }
         default: {
           const r = this.requests.find(
             (x) => x.kind === 'lost_shoe' && x.spots?.includes(s) && !x.checked?.includes(s),
           );
-          if (!r) return NICK_LINES.emptySpot;
+          if (!r) return '';
           return { ...base, req: r.id, kind: 'tap', title: `Check ${STATIONS[s].label.toLowerCase()}`, hint: 'Tap', icon: 'shoe' };
         }
       }
     }
-    if (t.t !== 'request') return NICK_LINES.nothingHere;
     const r = this.req(t.req);
-    if (!r) return NICK_LINES.nothingHere;
+    if (!r) return '';
     const who = r.owner in CAST ? CAST[r.owner as keyof typeof CAST].name : '';
     const rb = { ...base, req: r.id };
     switch (r.kind) {
@@ -698,7 +676,7 @@ export class Sim {
       case 'juice_box':
       case 'sippy_cup': {
         const item = FETCH_ITEM[r.kind]!;
-        if (n.hand !== item) return NICK_LINES.needItem(ITEM_NAMES[item]);
+        if (n.hand !== item) return `${who} wants a ${ITEM_NAMES[item]}. Kitchen.`;
         return { ...rb, kind: 'tap', title: `${ITEM_NAMES[item]} → ${who}`, hint: 'Tap', icon: item };
       }
       case 'diaper':
@@ -749,7 +727,7 @@ export class Sim {
       case 'spill':
         return { ...rb, kind: 'swipe', title: 'Clean it up', hint: `Swipe ${r.dir}`, icon: 'spill', dir: r.dir };
       default:
-        return NICK_LINES.nothingHere;
+        return '';
     }
   }
 
@@ -758,8 +736,7 @@ export class Sim {
     const it = this.interaction;
     if (!it || this.over) return;
     if (it.kind === 'choice' || it.kind === 'multi') return;
-    const q = this.queue.find((x) => x.id === it.qid);
-    const target = q?.target;
+    const target = it.target;
     const r = this.req(it.req);
     this.emit({ type: 'haptic', pattern: 20 });
 
@@ -777,7 +754,7 @@ export class Sim {
         this.stats.coffeeRefills++;
         this.emit({ type: 'sfx', name: 'good' });
       } else if (s === 'highchair' || s === 'playpen') {
-        this.setDownNora(STATIONS[s].room, true, s);
+        this.setDownNora(true, s);
       } else if (s === 'thermostat' && r) {
         this.resolve(r);
         this.thermostatAt = this.t + this.rng.range(...THERMOSTAT.gapSec);
@@ -789,8 +766,7 @@ export class Sim {
         this.resolve(r);
         const d = this.actors.eloise;
         d.state = 'outside';
-        d.room = 'backyard';
-        Object.assign(d, { x: 0.55, y: 0.8 });
+        d.dest = floorPoint(this.rng, 'backyard');
         this.dog.outsideLeft = DOG.outsideSec;
       } else if (r?.kind === 'lost_shoe') {
         r.checked = [...(r.checked ?? []), s];
@@ -892,18 +868,9 @@ export class Sim {
     }
   }
 
-  // "Not now": abandon the current panel and move on.
-  skipInteraction() {
-    if (!this.interaction) return;
-    this.cancelQueue(this.interaction.qid);
-  }
-
   private finishInteraction() {
-    const it = this.interaction;
-    if (!it) return;
     this.interaction = null;
-    const i = this.queue.findIndex((q) => q.id === it.qid);
-    if (i >= 0) this.queue.splice(i, 1);
+    this.engaged = false;
   }
 
   // ------------------------------------------------------------ requests
@@ -932,20 +899,7 @@ export class Sim {
         if (a.id !== 'eloise') a.nextReq = this.kidGap(a.id as KidId);
       }
     }
-    // Drop queued work aimed at it (including lost-shoe spots tagged with it).
-    const dead = this.queue.filter(
-      (q) => (q.target.t === 'request' && q.target.req === r.id) || (q.target.t === 'station' && q.target.req === r.id),
-    );
-    for (const q of dead) {
-      const i = this.queue.indexOf(q);
-      this.queue.splice(i, 1);
-      if (this.interaction?.qid === q.id) this.interaction = null;
-    }
-    if (this.interaction?.req === r.id) {
-      const qid = this.interaction.qid;
-      this.interaction = null;
-      this.queue = this.queue.filter((q) => q.id !== qid);
-    }
+    if (this.interaction?.req === r.id) this.finishInteraction();
   }
 
   private resolve(r: Request) {
@@ -1015,7 +969,7 @@ export class Sim {
       const r = this.req(a.req);
       if (r) this.removeRequest(r);
     }
-    if (a.state === 'carried') this.setDownNora(this.nick.room, false);
+    if (a.state === 'carried') this.setDownNora(false);
     a.state = 'crying';
     a.cryLeft = (k === 'nora' ? CRY.noraSec : CRY.sec) * severity;
     a.speech = null;
@@ -1059,13 +1013,37 @@ export class Sim {
         a.nextWander -= tdt;
         if (a.nextWander <= 0) {
           a.nextWander = this.rng.range(...(k === 'nora' ? WANDER.noraGapSec : WANDER.gapSec));
-          if (this.rng.chance(WANDER.moveChance)) a.room = this.rng.pick(neighbors(a.room));
-          Object.assign(a, floorPos(this.rng));
+          const room = this.rng.chance(WANDER.moveChance) ? this.rng.pick(neighbors(a.room)) : a.room;
+          a.dest = floorPoint(this.rng, room);
         }
+        this.walk(a, MOVE.kidSpeed * (k === 'nora' ? 0.75 : 1), tdt);
         a.nextReq -= tdt;
-        if (a.nextReq <= 0) this.spawnKidRequest(k);
+        if (a.nextReq <= 0) {
+          a.dest = null; // kids stand still while they want something
+          this.spawnKidRequest(k);
+        }
       }
     }
+  }
+
+  // Walk an actor toward its destination through doorways.
+  private walk(a: Actor, speed: number, dt: number) {
+    if (!a.dest || dt <= 0) return;
+    const d = a.dest;
+    if (dist(a.x, a.y, d.x, d.y) < 3) {
+      a.dest = null;
+      return;
+    }
+    const w = steer(a.x, a.y, d.x, d.y, 8);
+    const dx = w.x - a.x;
+    const dy = w.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const step = Math.min(speed * dt, len);
+    const p = moveCircle(a.x, a.y, (dx / len) * step, (dy / len) * step, 8);
+    if (Math.hypot(p.x - a.x, p.y - a.y) < 0.001) a.dest = null; // stuck: pick another spot later
+    a.x = p.x;
+    a.y = p.y;
+    a.room = roomAt(a.x, a.y);
   }
 
   private spawnKidRequest(k: KidId) {
@@ -1097,15 +1075,16 @@ export class Sim {
     }
   }
 
-  setDownNora(room: RoomId, early: boolean, station?: StationId) {
+  setDownNora(early: boolean, station?: StationId) {
     if (this.nick.hand !== 'nora') return;
     this.nick.hand = null;
     this.nick.carryLeft = 0;
     const n = this.actors.nora;
     n.state = 'idle';
-    n.room = room;
-    if (station) Object.assign(n, { x: STATIONS[station].x, y: Math.min(0.86, STATIONS[station].y + 0.08) });
-    else Object.assign(n, floorPos(this.rng));
+    n.dest = null;
+    if (station) Object.assign(n, { x: STATIONS[station].x, y: STATIONS[station].y + 4 });
+    else Object.assign(n, { x: this.nick.x + 14 * this.nick.facing, y: this.nick.y + 4 });
+    n.room = roomAt(n.x, n.y);
     n.nextReq = this.kidGap('nora');
     n.nextWander = this.rng.range(...WANDER.noraGapSec);
     if (early) {
@@ -1121,7 +1100,7 @@ export class Sim {
   // ------------------------------------------------------------ nap
   private startNap() {
     const n = this.actors.nora;
-    if (n.state === 'carried') this.setDownNora(this.nick.room, false);
+    if (n.state === 'carried') this.setDownNora(false);
     if (n.req != null) {
       const r = this.req(n.req);
       if (r) this.removeRequest(r);
@@ -1132,6 +1111,7 @@ export class Sim {
     n.room = COUCH_POS.room;
     n.x = COUCH_POS.x;
     n.y = COUCH_POS.y;
+    n.dest = null;
     n.speech = null;
     this.nap.state = 'asleep';
     this.nap.noise = 0;
@@ -1184,6 +1164,7 @@ export class Sim {
     if (!d.present) return;
     this.dog.needsOutCd = Math.max(0, this.dog.needsOutCd - tdt);
     if (d.state === 'outside') {
+      this.walk(d, MOVE.dogSpeed * 1.4, tdt);
       this.dog.outsideLeft -= tdt;
       if (this.dog.outsideLeft <= 0) {
         d.state = 'idle';
@@ -1196,10 +1177,11 @@ export class Sim {
       d.nextWander -= tdt;
       if (d.nextWander <= 0) {
         d.nextWander = this.rng.range(3, 7);
-        if (this.rng.chance(0.6)) d.room = this.rng.pick(neighbors(d.room));
-        Object.assign(d, floorPos(this.rng));
+        const room = this.rng.chance(0.6) ? this.rng.pick(neighbors(d.room)) : d.room;
+        d.dest = floorPoint(this.rng, room);
       }
     }
+    this.walk(d, MOVE.dogSpeed, tdt);
     this.dog.nextAction -= tdt;
     if (this.dog.nextAction > 0) return;
     this.dog.nextAction = this.rng.range(...DOG.actionGapSec) / this.rateMult();
@@ -1226,8 +1208,8 @@ export class Sim {
     }
     if (act === 'spill') {
       this.makeRequest('spill', 'eloise', d.room, {
-        x: Math.min(0.85, d.x + 0.05),
-        y: Math.min(0.88, d.y + 0.04),
+        x: d.x + 10,
+        y: d.y + 6,
         dir: this.rng.pick(['left', 'right', 'up', 'down'] as Dir[]),
       });
       this.say('eloise', '*crash*', 1.5);
@@ -1235,9 +1217,8 @@ export class Sim {
     }
     if (act === 'needs_out') {
       this.dog.needsOutCd = DOG.needsOutCooldownSec;
-      d.room = 'backyard';
-      Object.assign(d, DOOR_WAIT_POS);
-      this.makeRequest('needs_out', 'eloise', 'backyard');
+      d.dest = { ...DOOR_WAIT_POS };
+      this.makeRequest('needs_out', 'eloise', STATIONS.door.room);
       this.say('eloise', '*whine*', 2);
       return;
     }
@@ -1285,7 +1266,7 @@ export class Sim {
   // ------------------------------------------------------------ FaceTime
   private startFacetime() {
     const n = this.nick;
-    if (n.hand === 'nora') this.setDownNora(n.room, false);
+    if (n.hand === 'nora') this.setDownNora(false);
     if (n.hand && n.hand !== 'phone') n.pocket = n.hand as ItemId;
     n.hand = 'phone';
     this.facetime.state = 'active';
@@ -1386,10 +1367,6 @@ export class Sim {
   }
 }
 
-export function sameTarget(a: Target, b: Target): boolean {
-  if (a.t !== b.t) return false;
-  if (a.t === 'room' && b.t === 'room') return a.room === b.room;
-  if (a.t === 'station' && b.t === 'station') return a.station === b.station;
-  if (a.t === 'request' && b.t === 'request') return a.req === b.req;
-  return false;
+export function targetKey(t: Target): string {
+  return t.t === 'station' ? `s:${t.station}` : `r:${t.req}`;
 }

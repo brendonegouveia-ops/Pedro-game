@@ -20,22 +20,18 @@ export const CAST = {
 } as const;
 
 // ---------------------------------------------------------------- house
-// 2x2 grid. Orthogonal neighbours are 1 hop, diagonal rooms are 2 hops.
-export const ROOMS = {
-  kitchen: { name: 'Kitchen', col: 0, row: 0 },
-  living: { name: 'Living Room', col: 1, row: 0 },
-  garage: { name: 'Garage', col: 0, row: 1 },
-  backyard: { name: 'Backyard', col: 1, row: 1 },
-} as const;
-
+// The floor plan itself (rooms, walls, doors, stations) is in src/sim/house.ts.
 export const MOVE = {
-  hopSec: 0.5, // one room hop at base speed
+  speed: 190, // Nick, design px per second
   lowCoffeeSpeed: 0.6, // "40% slower" below the coffee threshold
+  radius: 10, // collision radius
+  reach: 40, // how close Nick must stand to a kid or spill to help
+  stationReach: 24, // stations: stand on them
+  kidSpeed: 55,
+  dogSpeed: 75,
 };
 
 // ---------------------------------------------------------------- core loop
-export const QUEUE_MAX = 4;
-
 export const PATIENCE = {
   baseSec: 8,
   shrinkPerHour: 0.06, // patience x (1 - 0.06 * hours since 9 AM)
@@ -94,9 +90,9 @@ export const CRY = {
 
 // Seconds (== game minutes) between a kid's requests. Divided by the rate multiplier.
 export const REQUEST_GAP: Record<'evelyn' | 'nora' | 'tyler', [number, number]> = {
-  evelyn: [6, 12],
-  nora: [6, 11],
-  tyler: [6, 11],
+  evelyn: [8, 14],
+  nora: [8, 13],
+  tyler: [8, 13],
 };
 export const FIRST_REQUEST_SEC = 4;
 export const RATE_AFTER_3PM_PER_HOUR = 0.15; // uncapped
@@ -252,7 +248,6 @@ export const NORA_GROAN = 'Bah!';
 export const DOG_GROAN = 'Hrrmf.';
 
 export const NICK_LINES = {
-  queueFull: 'Four things. I got four things.',
   handsBusy: 'Free hand’s busy.',
   handsFullPhone: 'Can’t, I’m on with your mom.',
   nothingHere: 'Hm. Never mind.',

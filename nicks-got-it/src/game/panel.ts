@@ -1,15 +1,16 @@
 // The Action Panel: bottom-of-screen thumb zone where every gesture is resolved at a large size.
-// When Nick has no gesture to do, it shows the to-do queue and what's in his free hand.
+// It shows the job Nick is standing next to. Starting a gesture locks him in place (sim.engage).
+// With nothing in reach it shows what's in his free hand and a hint.
 import Phaser from 'phaser';
 import { GESTURES, ITEM_NAMES } from '../config';
-import { STATIONS } from '../sim/house';
-import { REQUEST_LABEL, type Interaction, type Sim, type Target } from '../sim/sim';
+import { type Interaction, type Sim } from '../sim/sim';
 import { drawIcon } from './art';
 import { COLORS, PANEL } from './layout';
 
 type Btn = { x: number; y: number; w: number; h: number; on: () => void };
 
-const HEADER_H = 50;
+const HEADER_H = 44;
+const HOLD_R = 40;
 
 export class ActionPanel {
   private root: Phaser.GameObjects.Container;
@@ -59,7 +60,7 @@ export class ActionPanel {
 
   pointerDown(x: number, y: number) {
     const it = this.active;
-    // Buttons first (Not now, choices, chips, drop).
+    // Buttons first (choices, kids, put-it-down).
     const b = this.hit(x, y);
     if (b && (!it || it.kind === 'choice' || it.kind === 'multi' || y < PANEL.y + HEADER_H)) {
       b.on();
@@ -74,14 +75,17 @@ export class ActionPanel {
         break;
       case 'hold':
         this.holding = true;
+        this.sim().engage(true);
         break;
       case 'rub':
         this.holding = true;
         this.rubLastX = x;
         this.rubLastY = y;
+        this.sim().engage(true);
         break;
       case 'swipe':
         this.swipeStart = { x, y, t: this.now };
+        this.sim().engage(true);
         break;
       case 'mash':
         this.mash();
@@ -108,6 +112,8 @@ export class ActionPanel {
     this.holding = false;
     if (it?.kind === 'swipe' && this.swipeStart) this.trySwipe(x, y, true);
     this.swipeStart = null;
+    // Letting go frees Nick to walk (a mash stays locked until the taps stop).
+    if (it?.kind !== 'mash') this.sim().engage(false);
   }
 
   // Keyboard: Space/Enter = tap, hold, mash, next kid. Arrows = swipe / rub. Z/X = choices.
@@ -116,7 +122,10 @@ export class ActionPanel {
     if (!it) return false;
     if (code === 'Space' || code === 'Enter') {
       if (it.kind === 'tap') this.done();
-      else if (it.kind === 'hold') this.holding = true;
+      else if (it.kind === 'hold') {
+        this.holding = true;
+        this.sim().engage(true);
+      }
       else if (it.kind === 'mash' && !repeat) this.mash();
       else if (it.kind === 'multi') {
         const i = it.multi!.findIndex((m) => !m.done);
@@ -139,15 +148,14 @@ export class ActionPanel {
       this.sim().choose(code === 'KeyZ' ? 0 : 1);
       return true;
     }
-    if (code === 'Backspace' || code === 'KeyN') {
-      this.sim().skipInteraction();
-      return true;
-    }
     return false;
   }
 
   keyUp(code: string) {
-    if (code === 'Space' || code === 'Enter') this.holding = false;
+    if (code === 'Space' || code === 'Enter') {
+      this.holding = false;
+      if (this.active?.kind === 'hold') this.sim().engage(false);
+    }
   }
 
   private hit(x: number, y: number): Btn | undefined {
@@ -164,6 +172,7 @@ export class ActionPanel {
   private mash() {
     const it = this.active!;
     this.mashTaps.push(this.now);
+    this.sim().engage(true);
     this.scene.events.emit('panel-sfx', 'tap');
     const win = it.mashWindow ?? GESTURES.flipMashWindowSec;
     this.mashTaps = this.mashTaps.filter((t) => this.now - t <= win);
@@ -210,7 +219,7 @@ export class ActionPanel {
 
     const sig = it
       ? `i${it.id}|${it.kind}|${it.multi?.map((m) => +m.done).join('')}|${it.options?.map((o) => +o.enabled).join('')}`
-      : `q${sim.queue.map((q) => q.id).join(',')}|${sim.nick.hand}|${this.selectMode}`;
+      : `n|${sim.nick.hand}|${this.selectMode}|${sim.note}|${sim.steering}`;
     if (sig !== this.sig) {
       const newInteraction = it && !this.sig.startsWith(`i${it.id}|`);
       this.sig = sig;
@@ -230,6 +239,7 @@ export class ActionPanel {
       const win = it.mashWindow ?? GESTURES.flipMashWindowSec;
       this.mashTaps = this.mashTaps.filter((t) => this.now - t <= win);
       this.progress = this.mashTaps.length / (it.mashTaps ?? GESTURES.flipMashTaps);
+      if (sim.engaged && !this.mashTaps.some((t) => this.now - t < 0.8)) sim.engage(false);
     }
     this.drawWidget(it);
   }
@@ -269,14 +279,10 @@ export class ActionPanel {
       g.fillStyle(0x000000, 0.25).fillRoundedRect(6, top + 4, PANEL.w - 12, PANEL.h - 4, 18);
       g.fillStyle(COLORS.panel, 1).fillRoundedRect(6, top, PANEL.w - 12, PANEL.h - 6, 18);
       g.lineStyle(3, COLORS.accent, 1).strokeRoundedRect(6, top, PANEL.w - 12, PANEL.h - 6, 18);
-      this.addIcon(it.icon, 34, top + 26, 30);
-      this.addText(this.txt(58, top + 10, it.title, 19, '#22223b', { fontStyle: 'bold' }));
-      this.addText(this.txt(58, top + 32, it.hint, 13, '#6c5f5b'));
-      // "Not now" escape hatch: drop this job and move on.
-      const nb = { x: PANEL.w - 84, y: top + 6, w: 72, h: 40, on: () => this.sim().skipInteraction() };
-      this.buttons.push(nb);
-      g.fillStyle(0xe8d5b0, 1).fillRoundedRect(nb.x, nb.y, nb.w, nb.h, 12);
-      this.addText(this.txt(nb.x + nb.w / 2, nb.y + nb.h / 2, 'Not now', 13, '#3d405b').setOrigin(0.5));
+      this.addIcon(it.icon, 32, top + 23, 26);
+      this.addText(this.txt(54, top + 8, it.title, 18, '#22223b', { fontStyle: 'bold' }));
+      this.addText(this.txt(54, top + 28, it.hint, 12, '#6c5f5b'));
+      this.addText(this.txt(PANEL.w - 18, top + 12, 'walk away\nto skip', 10, '#a39b8b', { align: 'right' }).setOrigin(1, 0));
       this.buildWidget(it);
       if (anim === 'slide') {
         this.root.y = 60;
@@ -294,27 +300,27 @@ export class ActionPanel {
     const cx = PANEL.w / 2;
     const cy = PANEL.y + HEADER_H + (PANEL.h - HEADER_H) / 2 - 4;
     const g = this.bg;
+    const bh = PANEL.h - HEADER_H - 16;
     switch (it.kind) {
       case 'choice': {
         const opts = it.options ?? [];
         const bw = 172;
-        const bh = 128;
         opts.forEach((o, i) => {
           const x = cx - bw - 6 + i * (bw + 12);
           const y = cy - bh / 2;
           g.fillStyle(o.enabled ? 0xffffff : 0xece4d6, 1).fillRoundedRect(x, y, bw, bh, 16);
           g.lineStyle(3, o.enabled ? COLORS.ink : 0xc9bda8, 1).strokeRoundedRect(x, y, bw, bh, 16);
-          const ic = this.addIcon(o.icon, x + bw / 2, y + 34, 38);
+          const ic = this.addIcon(o.icon, x + bw / 2, y + 24, 30);
           ic.alpha = o.enabled ? 1 : 0.35;
           this.addText(
-            this.txt(x + bw / 2, y + 70, o.label, 17, o.enabled ? '#22223b' : '#a39b8b', {
+            this.txt(x + bw / 2, y + 44, o.label, 16, o.enabled ? '#22223b' : '#a39b8b', {
               fontStyle: 'bold',
               align: 'center',
               wordWrap: { width: bw - 16 },
             }).setOrigin(0.5, 0),
           );
           this.addText(
-            this.txt(x + bw / 2, y + bh - 22, o.sub, 12, o.enabled ? '#6c5f5b' : '#a39b8b', { align: 'center' }).setOrigin(0.5, 0),
+            this.txt(x + bw / 2, y + bh - 20, o.sub, 11, o.enabled ? '#6c5f5b' : '#a39b8b', { align: 'center' }).setOrigin(0.5, 0),
           );
           this.buttons.push({ x, y, w: bw, h: bh, on: () => o.enabled && this.sim().choose(i) });
         });
@@ -323,7 +329,6 @@ export class ActionPanel {
       case 'multi': {
         const m = it.multi ?? [];
         const bw = Math.min(172, (PANEL.w - 40) / m.length - 8);
-        const bh = 128;
         m.forEach((k, i) => {
           const x = cx - (m.length * (bw + 12) - 12) / 2 + i * (bw + 12);
           const y = cy - bh / 2;
@@ -336,24 +341,24 @@ export class ActionPanel {
         break;
       }
       case 'swipe':
-        this.addText(this.txt(cx, cy + 62, `SWIPE ${it.dir?.toUpperCase()}`, 15, '#6c5f5b', { fontStyle: 'bold' }).setOrigin(0.5));
+        this.addText(this.txt(cx, cy + 46, `SWIPE ${it.dir?.toUpperCase()}`, 13, '#6c5f5b', { fontStyle: 'bold' }).setOrigin(0.5));
         break;
       case 'tap':
-        this.addText(this.txt(cx, cy + 66, 'TAP', 15, '#6c5f5b', { fontStyle: 'bold' }).setOrigin(0.5));
+        this.addText(this.txt(cx + 96, cy - 6, 'TAP', 15, '#6c5f5b', { fontStyle: 'bold' }).setOrigin(0.5));
         break;
       case 'hold':
-        this.addText(this.txt(cx, cy + 66, `HOLD ${it.holdSec}s`, 15, '#6c5f5b', { fontStyle: 'bold' }).setOrigin(0.5));
+        this.addText(this.txt(cx + 104, cy - 6, `HOLD\n${it.holdSec}s`, 15, '#6c5f5b', { fontStyle: 'bold' }).setOrigin(0.5));
         break;
       case 'mash':
-        this.addText(this.txt(cx - 120, cy - 6, 'TAP\nTAP\nTAP', 14, '#6c5f5b', { fontStyle: 'bold', align: 'center' }).setOrigin(0.5));
-        this.addText(this.txt(cx + 120, cy - 6, `×${it.mashTaps}\nfast`, 14, '#6c5f5b', { fontStyle: 'bold', align: 'center' }).setOrigin(0.5));
+        this.addText(this.txt(cx - 110, cy - 6, 'TAP\nTAP\nTAP', 13, '#6c5f5b', { fontStyle: 'bold', align: 'center' }).setOrigin(0.5));
+        this.addText(this.txt(cx + 110, cy - 6, `×${it.mashTaps}\nfast`, 13, '#6c5f5b', { fontStyle: 'bold', align: 'center' }).setOrigin(0.5));
         break;
       case 'rub':
-        this.addText(this.txt(cx, cy + 66, 'RUB ← →', 15, '#6c5f5b', { fontStyle: 'bold' }).setOrigin(0.5));
+        this.addText(this.txt(cx, cy + 46, 'RUB ← →', 13, '#6c5f5b', { fontStyle: 'bold' }).setOrigin(0.5));
         break;
     }
     if (it.kind !== 'choice' && it.kind !== 'multi') {
-      const ic = this.addIcon(it.icon, cx, cy - 6, 52);
+      const ic = this.addIcon(it.icon, cx, cy - 6, 44);
       ic.setName('bigIcon');
     }
   }
@@ -372,14 +377,14 @@ export class ActionPanel {
     switch (it.kind) {
       case 'tap': {
         const pulse = 1 + Math.sin(this.now * 8) * 0.04;
-        g.fillStyle(COLORS.accent, 0.25).fillCircle(cx, cy - 6, 56 * pulse);
-        g.lineStyle(4, COLORS.accent, 1).strokeCircle(cx, cy - 6, 50 * pulse);
+        g.fillStyle(COLORS.accent, 0.25).fillCircle(cx, cy - 6, (HOLD_R + 6) * pulse);
+        g.lineStyle(4, COLORS.accent, 1).strokeCircle(cx, cy - 6, HOLD_R * pulse);
         if (big) big.x = cx;
         break;
       }
       case 'hold':
       case 'mash': {
-        const r = 52;
+        const r = HOLD_R;
         g.fillStyle(this.holding ? 0xffe0c2 : 0xffffff, 1).fillCircle(cx, cy - 6, r);
         g.lineStyle(10, 0xe8d5b0, 1).strokeCircle(cx, cy - 6, r);
         if (this.progress > 0) {
@@ -392,7 +397,7 @@ export class ActionPanel {
           const n = it.mashTaps ?? 7;
           for (let i = 0; i < n; i++) {
             g.fillStyle(i < this.mashTaps.length ? COLORS.accent : 0xd6c6a8, 1);
-            g.fillCircle(cx + (i - (n - 1) / 2) * 20, cy + 66, 6);
+            g.fillCircle(cx + (i - (n - 1) / 2) * 18, cy + 50, 5);
           }
         }
         if (big) {
@@ -402,13 +407,13 @@ export class ActionPanel {
         break;
       }
       case 'rub': {
-        g.fillStyle(SKIN_PAD, 1).fillRoundedRect(30, cy - 44, PANEL.w - 60, 80, 30);
-        g.fillStyle(0xe5484d, 0.6 * (1 - this.progress)).fillCircle(PANEL.w / 2, cy - 4, 14);
-        g.fillStyle(0xe8d5b0, 1).fillRoundedRect(40, cy + 46, PANEL.w - 80, 10, 5);
-        g.fillStyle(COLORS.good, 1).fillRoundedRect(40, cy + 46, (PANEL.w - 80) * this.progress, 10, 5);
+        g.fillStyle(SKIN_PAD, 1).fillRoundedRect(30, cy - 38, PANEL.w - 60, 66, 28);
+        g.fillStyle(0xe5484d, 0.6 * (1 - this.progress)).fillCircle(PANEL.w / 2, cy - 6, 12);
+        g.fillStyle(0xe8d5b0, 1).fillRoundedRect(40, cy + 34, PANEL.w - 80, 8, 4);
+        g.fillStyle(COLORS.good, 1).fillRoundedRect(40, cy + 34, (PANEL.w - 80) * this.progress, 8, 4);
         if (big) {
           big.x = Phaser.Math.Clamp(this.rubFollowX || PANEL.w / 2, 60, PANEL.w - 60);
-          big.y = cy - 4;
+          big.y = cy - 6;
         }
         break;
       }
@@ -416,11 +421,11 @@ export class ActionPanel {
         const d = it.dir ?? 'down';
         const v = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] }[d];
         const t = (this.now * 1.6) % 1;
-        g.fillStyle(0x3a86ff, 0.18).fillRoundedRect(cx - 110, cy - 58, 220, 104, 20);
+        g.fillStyle(0x3a86ff, 0.18).fillRoundedRect(cx - 110, cy - 50, 220, 86, 20);
         for (let i = 0; i < 3; i++) {
           const k = ((t + i / 3) % 1) - 0.5;
           const ax = cx + v[0] * k * 120;
-          const ay = cy - 6 + v[1] * k * 70;
+          const ay = cy - 6 + v[1] * k * 56;
           arrow(g, ax, ay, v[0], v[1], 16, 0x3a86ff, 1 - Math.abs(k) * 1.6);
         }
         if (big) {
@@ -440,58 +445,44 @@ export class ActionPanel {
     g.fillStyle(0x2b2d42, 0.92).fillRoundedRect(6, top, PANEL.w - 12, PANEL.h - 6, 18);
     if (this.selectMode) {
       g.lineStyle(3, 0xe76f51, 1).strokeRoundedRect(6, top, PANEL.w - 12, PANEL.h - 6, 18);
-      this.addIcon('kayla', 40, top + 60, 40);
-      this.addText(this.txt(70, top + 34, 'Call Kayla', 20, '#ffffff', { fontStyle: 'bold' }));
-      this.addText(this.txt(70, top + 62, 'Tap the request she should handle.', 14, '#f2e9e4', { wordWrap: { width: 290 } }));
-      const b = { x: 120, y: top + 130, w: 150, h: 52, on: () => this.onCancelSelect() };
+      this.addIcon('kayla', 40, top + 48, 36);
+      this.addText(this.txt(70, top + 22, 'Call Kayla', 20, '#ffffff', { fontStyle: 'bold' }));
+      this.addText(this.txt(70, top + 50, 'Tap the request she should handle.', 14, '#f2e9e4', { wordWrap: { width: 290 } }));
+      const b = { x: 120, y: top + 104, w: 150, h: 50, on: () => this.onCancelSelect() };
       g.fillStyle(0x4a4e69, 1).fillRoundedRect(b.x, b.y, b.w, b.h, 14);
       this.addText(this.txt(b.x + b.w / 2, b.y + b.h / 2, 'Never mind', 16, '#ffffff').setOrigin(0.5));
       this.buttons.push(b);
       return;
     }
-    this.addText(this.txt(20, top + 12, 'TO-DO', 12, '#c9c9d6', { fontStyle: 'bold' }));
-    this.addText(this.txt(PANEL.w - 20, top + 12, 'tap a chip to cancel', 11, '#8d8fa8').setOrigin(1, 0));
-    const cw = 84;
-    for (let i = 0; i < 4; i++) {
-      const x = 16 + i * (cw + 8);
-      const y = top + 32;
-      const q = sim.queue[i];
-      if (!q) {
-        g.lineStyle(2, 0x4a4e69, 1).strokeRoundedRect(x, y, cw, 72, 12);
-        this.addText(this.txt(x + cw / 2, y + 36, `${i + 1}`, 18, '#4a4e69', { fontStyle: 'bold' }).setOrigin(0.5));
-        continue;
-      }
-      g.fillStyle(0xfff4e0, 1).fillRoundedRect(x, y, cw, 72, 12);
-      g.fillStyle(COLORS.marker, 1).fillCircle(x + 14, y + 14, 11);
-      this.addText(this.txt(x + 14, y + 14, `${i + 1}`, 13, '#ffffff', { fontStyle: 'bold' }).setOrigin(0.5));
-      const { icon, label } = describeTarget(sim, q.target);
-      this.addIcon(icon, x + cw / 2, y + 30, 24);
-      this.addText(this.txt(x + cw / 2, y + 56, label, 11, '#22223b', { align: 'center', fixedWidth: cw - 6 }).setOrigin(0.5));
-      this.addText(this.txt(x + cw - 12, y + 12, '✕', 13, '#9a8c98').setOrigin(0.5));
-      this.buttons.push({ x, y, w: cw, h: 72, on: () => this.sim().cancelQueue(q.id) });
-    }
-    // Free hand
-    const hy = top + 118;
     const h = sim.nick.hand;
-    this.addText(this.txt(20, hy + 4, 'FREE HAND', 12, '#c9c9d6', { fontStyle: 'bold' }));
-    g.fillStyle(0x3d405b, 1).fillRoundedRect(16, hy + 22, 210, 56, 14);
+    const hy = top + 14;
+    this.addText(this.txt(20, hy, 'FREE HAND', 11, '#c9c9d6', { fontStyle: 'bold' }));
+    g.fillStyle(0x3d405b, 1).fillRoundedRect(16, hy + 18, 220, 50, 14);
     if (h) {
-      this.addIcon(h === 'nora' ? 'nora' : h === 'phone' ? 'phone' : h, 46, hy + 50, 30);
+      this.addIcon(h === 'nora' ? 'nora' : h === 'phone' ? 'phone' : h, 42, hy + 43, 26);
       const label = h === 'nora' ? 'Nora (on the hip)' : h === 'phone' ? 'Phone (your mother-in-law)' : ITEM_NAMES[h];
-      this.addText(this.txt(70, hy + 50, label, 14, '#ffffff', { wordWrap: { width: 150 } }).setOrigin(0, 0.5));
+      this.addText(this.txt(64, hy + 43, label, 14, '#ffffff', { wordWrap: { width: 166 } }).setOrigin(0, 0.5));
     } else {
-      this.addText(this.txt(30, hy + 50, 'Empty. (Other hand: coffee.)', 13, '#8d8fa8').setOrigin(0, 0.5));
+      this.addText(this.txt(28, hy + 43, 'Empty. (Other hand: coffee.)', 13, '#8d8fa8').setOrigin(0, 0.5));
     }
     if (h && h !== 'nora' && h !== 'phone') {
-      const b = { x: 236, y: hy + 22, w: 138, h: 56, on: () => this.sim().dropHand() };
+      const b = { x: 244, y: hy + 18, w: 130, h: 50, on: () => this.sim().dropHand() };
       g.fillStyle(0x4a4e69, 1).fillRoundedRect(b.x, b.y, b.w, b.h, 14);
       this.addText(this.txt(b.x + b.w / 2, b.y + b.h / 2, 'Put it down', 15, '#ffffff').setOrigin(0.5));
       this.buttons.push(b);
-    } else {
-      this.addText(
-        this.txt(300, hy + 50, sim.queue.length ? 'On it.' : 'Tap a bubble,\na station or a room.', 12, '#8d8fa8', { align: 'center' }).setOrigin(0.5),
-      );
     }
+    const line = sim.note
+      ? sim.note
+      : sim.steering
+        ? 'Walking…'
+        : 'Hold anywhere on the house to walk there.\nStop next to a kid or a station to help.';
+    this.addText(
+      this.txt(PANEL.w / 2, top + 112, line, sim.note ? 15 : 13, sim.note ? '#ffd166' : '#a5a7c4', {
+        align: 'center',
+        wordWrap: { width: PANEL.w - 40 },
+        fontStyle: sim.note ? 'bold' : 'normal',
+      }).setOrigin(0.5),
+    );
   }
 }
 
@@ -505,19 +496,4 @@ function arrow(g: Phaser.GameObjects.Graphics, x: number, y: number, vx: number,
   g.lineBetween(x - vx * s * 1.4, y - vy * s * 1.4, x, y);
   g.fillStyle(c, a);
   g.fillTriangle(x + vx * s, y + vy * s, x + px * s * 0.9, y + py * s * 0.9, x - px * s * 0.9, y - py * s * 0.9);
-}
-
-export function describeTarget(sim: Sim, t: Target): { icon: string; label: string } {
-  if (t.t === 'room') return { icon: 'door', label: { kitchen: 'Kitchen', living: 'Living rm', garage: 'Garage', backyard: 'Backyard' }[t.room] };
-  if (t.t === 'station') {
-    const s = t.station;
-    const icon =
-      { coffee: 'coffee', snacks: 'snack', juice: 'juice_box', sippy: 'sippy_cup', bandaids: 'bandaid', thermostat: 'thermostat', grill: 'burger', door: 'door', highchair: 'nora', playpen: 'nora' }[
-        s as string
-      ] ?? 'shoe';
-    return { icon, label: STATIONS[s].label };
-  }
-  const r = sim.req(t.req);
-  if (!r) return { icon: 'no', label: 'Gone' };
-  return { icon: r.kind, label: REQUEST_LABEL[r.kind] };
 }

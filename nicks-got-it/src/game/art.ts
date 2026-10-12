@@ -1,8 +1,6 @@
 // Original procedural art: every character, icon and room is drawn with Graphics primitives.
 import type Phaser from 'phaser';
-import { ROOMS } from '../config';
-import { COUCH_POS, type RoomId } from '../sim/house';
-import { roomPoint, roomRect, ROOM_H, ROOM_W } from './layout';
+import { ROOM_RECTS, WALLS, type Rect } from '../sim/house';
 
 type G = Phaser.GameObjects.Graphics;
 
@@ -469,89 +467,129 @@ function heart(g: G, x: number, y: number, r: number) {
   g.fillTriangle(x - r * 1.05, y, x + r * 1.05, y, x, y + r * 1.1);
 }
 
-// ---------------------------------------------------------------- rooms
-export function drawRooms(g: G) {
-  const kit = roomRect('kitchen');
-  const liv = roomRect('living');
-  const gar = roomRect('garage');
-  const yard = roomRect('backyard');
-  const floorY = 0.58;
+// ---------------------------------------------------------------- top-down floor plan
+// Drawn in world coordinates offset by (ox, oy). Walls and doorways come from the sim's map.
+export function drawWorld(g: G, ox: number, oy: number) {
+  const X = (x: number) => x + ox;
+  const Y = (y: number) => y + oy;
+  const R = (r: Rect, color: number, alpha = 1) => g.fillStyle(color, alpha).fillRect(X(r.x), Y(r.y), r.w, r.h);
+  const yard = ROOM_RECTS.backyard;
+  const kit = ROOM_RECTS.kitchen;
+  const liv = ROOM_RECTS.living;
+  const gar = ROOM_RECTS.garage;
 
-  // Kitchen: butter-yellow wall, checkered floor, counter + fridge.
-  g.fillStyle(0xfbe7a1, 1).fillRect(kit.x, kit.y, kit.w, kit.h);
-  g.fillStyle(0xffffff, 0.35).fillRect(kit.x, kit.y + 8, kit.w, 3);
-  checker(g, kit.x, kit.y + kit.h * floorY, kit.w, kit.h * (1 - floorY), 0xf8f9fa, 0xd8dee9, 14);
-  g.fillStyle(0xc08552, 1).fillRect(kit.x + 4, kit.y + kit.h * 0.38, kit.w * 0.78, 10);
-  g.fillStyle(0xa47148, 1).fillRect(kit.x + 4, kit.y + kit.h * 0.38 + 10, kit.w * 0.78, kit.h * 0.2 - 10);
-  g.fillStyle(0xdee2e6, 1).fillRoundedRect(kit.x + kit.w * 0.74, kit.y + kit.h * 0.12, kit.w * 0.24, kit.h * 0.48, 4);
-  g.lineStyle(2, 0xadb5bd, 1).lineBetween(kit.x + kit.w * 0.74, kit.y + kit.h * 0.3, kit.x + kit.w * 0.98, kit.y + kit.h * 0.3);
-  // high chair
-  const hc = roomPoint('kitchen', 0.15, 0.7);
-  g.fillStyle(0xe76f51, 1).fillRoundedRect(hc.x - 12, hc.y - 18, 24, 6, 2);
-  g.lineStyle(3, 0xe76f51, 1);
-  g.lineBetween(hc.x - 10, hc.y - 12, hc.x - 14, hc.y + 16);
-  g.lineBetween(hc.x + 10, hc.y - 12, hc.x + 14, hc.y + 16);
-  g.fillStyle(0xf4a261, 1).fillRoundedRect(hc.x - 9, hc.y - 34, 18, 16, 4);
+  // Backyard: mowed stripes, fence, patio, sandbox, tree, grill pad.
+  R(yard, 0x7cc47f);
+  for (let x = 0; x < yard.w; x += 52) g.fillStyle(0x72b975, 1).fillRect(X(x), Y(0), 26, yard.h);
+  g.fillStyle(0xd9cbb3, 1).fillRect(X(16), Y(124), 358, 36);
+  g.lineStyle(1, 0xc4b394, 1);
+  for (let x = 16; x <= 374; x += 18) g.lineBetween(X(x), Y(124), X(x), Y(160));
+  g.lineBetween(X(16), Y(142), X(374), Y(142));
+  g.fillStyle(0xe9d8a6, 1).fillRect(X(0), Y(0), 390, 6).fillRect(X(0), Y(0), 6, 160).fillRect(X(384), Y(0), 6, 160);
+  g.fillStyle(0xd4c08a, 1);
+  for (let x = 0; x < 390; x += 14) g.fillRect(X(x), Y(0), 2, 6);
+  // sandbox
+  g.fillStyle(0xa47148, 1).fillRect(X(30), Y(30), 64, 50);
+  g.fillStyle(0xf2dfa7, 1).fillRect(X(34), Y(34), 56, 42);
+  g.fillStyle(0xe63946, 1).fillCircle(X(50), Y(50), 5);
+  g.fillStyle(0x3a86ff, 1).fillRect(X(66), Y(56), 10, 8);
+  // tree canopy (shade)
+  g.fillStyle(0x000000, 0.12).fillCircle(X(196), Y(52), 40);
+  g.fillStyle(0x4f9a52, 1).fillCircle(X(186), Y(44), 34);
+  g.fillStyle(0x5aad5d, 1).fillCircle(X(176), Y(36), 18).fillCircle(X(198), Y(48), 16);
+  // grill pad
+  g.fillStyle(0xb5a48a, 1).fillRect(X(300), Y(32), 64, 62);
 
-  // Living room: slate wall, wood floor, couch, TV, window.
-  g.fillStyle(0xa8c5da, 1).fillRect(liv.x, liv.y, liv.w, liv.h);
-  planks(g, liv.x, liv.y + liv.h * floorY, liv.w, liv.h * (1 - floorY));
-  g.fillStyle(0xdff3ff, 1).fillRoundedRect(liv.x + liv.w * 0.62, liv.y + 16, liv.w * 0.3, liv.h * 0.26, 3);
-  g.lineStyle(3, 0xffffff, 1).strokeRoundedRect(liv.x + liv.w * 0.62, liv.y + 16, liv.w * 0.3, liv.h * 0.26, 3);
-  g.lineBetween(liv.x + liv.w * 0.77, liv.y + 16, liv.x + liv.w * 0.77, liv.y + 16 + liv.h * 0.26);
-  g.fillStyle(0x22223b, 1).fillRoundedRect(liv.x + liv.w * 0.3, liv.y + 22, liv.w * 0.28, liv.h * 0.2, 3);
-  g.fillStyle(0x4a4e69, 1).fillRect(liv.x + liv.w * 0.32, liv.y + 25, liv.w * 0.24, liv.h * 0.2 - 6);
-  const couch = roomPoint(COUCH_POS.room, COUCH_POS.x, COUCH_POS.y);
-  g.fillStyle(0x6d597a, 1).fillRoundedRect(couch.x - 46, couch.y - 30, 92, 26, 8);
-  g.fillStyle(0x83709a, 1).fillRoundedRect(couch.x - 50, couch.y - 10, 100, 18, 6);
-  g.fillStyle(0x6d597a, 1).fillRoundedRect(couch.x - 56, couch.y - 22, 12, 30, 5);
-  g.fillRoundedRect(couch.x + 44, couch.y - 22, 12, 30, 5);
-  // playpen
-  const pp = roomPoint('living', 0.84, 0.72);
-  g.lineStyle(2, 0x5fa8d3, 1).strokeRoundedRect(pp.x - 20, pp.y - 22, 40, 34, 4);
-  for (let i = -14; i <= 14; i += 7) g.lineBetween(pp.x + i, pp.y - 22, pp.x + i, pp.y + 12);
+  // Kitchen: tiles, counter down the left wall, table, high chair.
+  checker(g, X(kit.x), Y(kit.y), kit.w, kit.h, 0xf6f1e3, 0xdfe7ef, 16);
+  g.fillStyle(0xa47148, 1).fillRect(X(0), Y(166), 36, 184);
+  g.fillStyle(0xc08552, 1).fillRect(X(0), Y(166), 32, 184);
+  g.fillStyle(0xe8d9c0, 1).fillRect(X(32), Y(166), 4, 184);
+  g.fillStyle(0x000000, 0.1).fillCircle(X(112), Y(252), 28);
+  g.fillStyle(0x8d5a3b, 1).fillCircle(X(110), Y(248), 26);
+  g.fillStyle(0xa47148, 1).fillCircle(X(110), Y(248), 21);
+  g.fillStyle(0xe76f51, 1);
+  for (const [cx, cy] of [[110, 212], [110, 284], [74, 248], [146, 248]]) g.fillRoundedRect(X(cx - 9), Y(cy - 9), 18, 18, 4);
+  g.fillStyle(0xf4a261, 1).fillRoundedRect(X(136), Y(306), 28, 24, 5);
+  g.fillStyle(0xe76f51, 1).fillRoundedRect(X(138), Y(296), 24, 10, 3);
 
-  // Garage: concrete, pegboard, shelf.
-  g.fillStyle(0xb0b6bd, 1).fillRect(gar.x, gar.y, gar.w, gar.h);
-  g.fillStyle(0xd2b48c, 1).fillRect(gar.x + 6, gar.y + 10, gar.w - 12, gar.h * 0.3);
-  g.fillStyle(0xbf9b6f, 1);
-  for (let x = gar.x + 14; x < gar.x + gar.w - 8; x += 12)
-    for (let y = gar.y + 16; y < gar.y + gar.h * 0.3 + 6; y += 12) g.fillCircle(x, y, 1.2);
-  g.fillStyle(0x8d99ae, 1).fillRect(gar.x, gar.y + gar.h * floorY, gar.w, gar.h * (1 - floorY));
-  g.fillStyle(0x6c757d, 0.35).fillEllipse(gar.x + gar.w * 0.6, gar.y + gar.h * 0.86, 60, 12);
-  g.fillStyle(0x6c584c, 1).fillRect(gar.x + 4, gar.y + gar.h * 0.42, gar.w - 8, 6);
-
-  // Backyard: sky, fence, grass, house siding by the back door.
-  g.fillStyle(0x9bd4f5, 1).fillRect(yard.x, yard.y, yard.w, yard.h * 0.5);
-  g.fillStyle(0xffd166, 1).fillCircle(yard.x + yard.w - 26, yard.y + 24, 13);
-  g.fillStyle(0xe9d8a6, 1);
-  for (let x = yard.x + 30; x < yard.x + yard.w; x += 13) g.fillRoundedRect(x, yard.y + yard.h * 0.32, 10, yard.h * 0.22, 3);
-  g.fillStyle(0x76c893, 1).fillRect(yard.x, yard.y + yard.h * 0.5, yard.w, yard.h * 0.5);
-  g.fillStyle(0x52b69a, 1);
-  for (let i = 0; i < 26; i++) {
-    const gx = yard.x + 30 + ((i * 37) % (yard.w - 40));
-    const gy = yard.y + yard.h * 0.56 + ((i * 53) % (yard.h * 0.4));
-    g.fillTriangle(gx, gy, gx + 3, gy, gx + 1.5, gy - 5);
+  // Living room: planks, rug, couch facing the TV, coffee table, playpen, window.
+  planksH(g, X(liv.x), Y(liv.y), liv.w, liv.h);
+  g.fillStyle(0xe9c46a, 0.9).fillEllipse(X(292), Y(418), 170, 120);
+  g.lineStyle(3, 0xd4a373, 1).strokeEllipse(X(292), Y(418), 150, 104);
+  g.fillStyle(0x000000, 0.12).fillRoundedRect(X(238), Y(372), 112, 40, 8);
+  g.fillStyle(0x6d597a, 1).fillRoundedRect(X(236), Y(366), 112, 16, 6); // back
+  g.fillStyle(0x83709a, 1).fillRoundedRect(X(244), Y(380), 96, 24, 5); // seat
+  g.fillStyle(0x6d597a, 1).fillRoundedRect(X(232), Y(372), 14, 34, 5).fillRoundedRect(X(338), Y(372), 14, 34, 5);
+  g.lineStyle(1, 0x6d597a, 1).lineBetween(X(276), Y(382), X(276), Y(402)).lineBetween(X(308), Y(382), X(308), Y(402));
+  g.fillStyle(0x8d5a3b, 1).fillRoundedRect(X(268), Y(440), 48, 24, 4);
+  g.fillStyle(0x22223b, 1).fillRect(X(244), Y(506), 96, 10);
+  g.fillStyle(0x4a4e69, 1).fillRect(X(250), Y(504), 84, 4);
+  g.lineStyle(2, 0x5fa8d3, 1).strokeRect(X(330), Y(200), 44, 44);
+  for (let k = 0; k <= 44; k += 7) {
+    g.lineBetween(X(330 + k), Y(200), X(330 + k), Y(203));
+    g.lineBetween(X(330 + k), Y(241), X(330 + k), Y(244));
   }
-  g.fillStyle(0xd8c3a5, 1).fillRect(yard.x, yard.y, 24, yard.h);
-  g.lineStyle(1, 0xbfa888, 1);
-  for (let y = yard.y + 8; y < yard.y + yard.h; y += 8) g.lineBetween(yard.x, y, yard.x + 24, y);
-  const door = roomPoint('backyard', 0.13, 0.42);
-  g.fillStyle(0x8d5a3b, 1).fillRoundedRect(door.x - 15, door.y - 34, 30, 64, 3);
-  g.fillStyle(0xbde0fe, 1).fillRect(door.x - 9, door.y - 26, 18, 16);
-  g.fillStyle(0xffd166, 1).fillCircle(door.x + 9, door.y + 2, 2.5);
+  g.fillStyle(0xbde0fe, 1).fillRect(X(386), Y(250), 4, 90);
+  g.fillStyle(0xffd166, 1).fillCircle(X(346), Y(214), 4);
+  g.fillStyle(0xe63946, 1).fillRect(X(356), Y(228), 7, 7);
 
-  // Walls between rooms + outer frame.
-  g.lineStyle(4, 0x3d2c2e, 1);
-  g.strokeRect(kit.x + 2, kit.y, kit.w * 2 - 4, kit.h * 2);
-  g.lineBetween(liv.x, liv.y, liv.x, liv.y + ROOM_H * 2);
-  g.lineBetween(kit.x, gar.y, kit.x + ROOM_W * 2, gar.y);
-  // doorways
+  // Garage: concrete, joints, oil stain, workbench, garage door segments.
+  R(gar, 0xa3abb5);
+  g.lineStyle(1, 0x8d96a1, 1).lineBetween(X(0), Y(438), X(188), Y(438)).lineBetween(X(94), Y(356), X(94), Y(520));
+  g.fillStyle(0x6c757d, 0.3).fillEllipse(X(110), Y(452), 52, 22);
+  g.fillStyle(0x8d6748, 1).fillRect(X(0), Y(356), 34, 100);
+  g.fillStyle(0x6c584c, 1).fillRect(X(30), Y(356), 4, 100);
+  g.fillStyle(0xdee2e6, 1);
+  for (let x = 4; x < 186; x += 30) g.fillRect(X(x), Y(514), 26, 4);
+
+  // Outer walls + interior walls with doorway leaves.
   g.fillStyle(0x3d2c2e, 1);
+  g.fillRect(X(0), Y(160), 4, 360).fillRect(X(386), Y(160), 4, 360).fillRect(X(0), Y(516), 390, 4);
+  for (const w of WALLS) g.fillRect(X(w.x), Y(w.y), w.w, w.h);
+  g.lineStyle(2, 0x8d5a3b, 1);
+  g.lineBetween(X(60), Y(166), X(60), Y(206)); // back door leaf, open into the kitchen
+  g.lineStyle(1, 0x8d5a3b, 0.6);
+  g.beginPath();
+  g.arc(X(60), Y(166), 40, 0, Math.PI / 2 - 0.25, false);
+  g.strokePath();
+  g.lineStyle(3, 0xbde0fe, 1).lineBetween(X(300), Y(163), X(328), Y(163)); // slider glass
+  g.lineStyle(2, 0x8d5a3b, 0.8).lineBetween(X(188), Y(228), X(168), Y(228));
+  g.lineBetween(X(112), Y(356), X(112), Y(376));
+  g.lineBetween(X(194), Y(440), X(214), Y(440));
 }
 
-// Label chips are drawn separately so they stay crisp text.
-export const ROOM_LABELS = (Object.keys(ROOMS) as RoomId[]).map((r) => ({ room: r, name: ROOMS[r].name }));
+export function drawSpot(g: G, s: string, x: number, y: number) {
+  switch (s) {
+    case 'spot_toolbox':
+      g.fillStyle(0xd62828, 1).fillRoundedRect(x - 13, y - 8, 26, 16, 3);
+      g.fillStyle(0x22223b, 1).fillRect(x - 13, y - 1, 26, 2).fillRect(x - 6, y - 11, 12, 3);
+      break;
+    case 'spot_bin':
+      g.fillStyle(0x2667cc, 1).fillRoundedRect(x - 15, y - 11, 30, 22, 3);
+      g.fillStyle(0x3a86ff, 1).fillRoundedRect(x - 12, y - 8, 24, 16, 2);
+      g.fillStyle(0xffffff, 1).fillEllipse(x - 4, y, 9, 5).fillEllipse(x + 5, y + 2, 9, 5);
+      break;
+    case 'spot_cooler':
+      g.fillStyle(0xffffff, 1).fillRoundedRect(x - 14, y - 10, 28, 20, 3);
+      g.fillStyle(0x4ea8de, 1).fillRect(x - 14, y - 10, 28, 6);
+      break;
+    case 'spot_bike':
+      g.lineStyle(3, 0x22223b, 1).strokeCircle(x - 9, y + 4, 7).strokeCircle(x + 11, y + 4, 7);
+      g.lineBetween(x - 9, y + 4, x + 2, y - 5).lineBetween(x + 2, y - 5, x + 11, y + 4);
+      g.fillStyle(0xc68b59, 1).fillRoundedRect(x - 18, y - 12, 14, 9, 2);
+      break;
+  }
+}
+
+// Kettle grill seen from above.
+export function drawGrill(g: G, x: number, y: number) {
+  g.fillStyle(0x000000, 0.2).fillCircle(x + 2, y + 3, 20);
+  g.fillStyle(0x22223b, 1).fillCircle(x, y, 19);
+  g.lineStyle(1.5, 0x6c757d, 1);
+  for (let k = -12; k <= 12; k += 6) g.lineBetween(x + k, y - Math.sqrt(256 - k * k), x + k, y + Math.sqrt(256 - k * k));
+  g.fillStyle(0x3d405b, 1).fillRoundedRect(x - 6, y + 17, 12, 6, 2);
+}
 
 function checker(g: G, x: number, y: number, w: number, h: number, a: number, b: number, s: number) {
   for (let i = 0; i * s < w; i++)
@@ -561,10 +599,10 @@ function checker(g: G, x: number, y: number, w: number, h: number, a: number, b:
     }
 }
 
-function planks(g: G, x: number, y: number, w: number, h: number) {
+function planksH(g: G, x: number, y: number, w: number, h: number) {
   g.fillStyle(0xc68b59, 1).fillRect(x, y, w, h);
   g.lineStyle(1, 0xa86f42, 1);
-  for (let yy = y + 12; yy < y + h; yy += 12) g.lineBetween(x, yy, x + w, yy);
-  for (let row = 0; row * 12 < h; row++)
-    for (let xx = x + ((row * 37) % 60); xx < x + w; xx += 60) g.lineBetween(xx, y + row * 12, xx, y + row * 12 + 12);
+  for (let yy = y + 14; yy < y + h; yy += 14) g.lineBetween(x, yy, x + w, yy);
+  for (let row = 0; row * 14 < h; row++)
+    for (let xx = x + ((row * 41) % 70); xx < x + w; xx += 70) g.lineBetween(xx, y + row * 14, xx, Math.min(y + h, y + row * 14 + 14));
 }
