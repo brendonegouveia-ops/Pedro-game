@@ -28,6 +28,10 @@ npm run smoke -- http://localhost:4173/   # Playwright, iPhone 13 profile, real 
 
 The smoke test walks Nick across the house by holding a finger on the grill, then drives every gesture (TAP, HOLD, RUB, SWIPE, MASH, choice, tap-each-kid) end to end with CDP touch events. It also checks Dad Joke, FaceTime “uh-huh”, pause on blur, the end card and the landscape rotate overlay. When `/api` is served, it also posts a score that should be rejected (a fast-forwarded run) and an honest one that should be accepted. Screenshots go to `test-results/`.
 
+## Quick prototype link (no deploy)
+
+`npm run build:artifact` writes one self-contained HTML page (`artifact/nicks-got-it.html`): the game code and CSS are inlined and Phaser loads from jsDelivr (unpkg as a fallback). It can be published as a private claude.ai Artifact and opened on a phone. The leaderboard shows "offline" there, because there are no Pages Functions behind it.
+
 ## Deploy to Cloudflare Pages
 
 1. Create the database and copy the printed `database_id` into `wrangler.toml`:
