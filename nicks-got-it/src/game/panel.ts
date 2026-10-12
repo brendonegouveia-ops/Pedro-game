@@ -1,5 +1,5 @@
-// The Action Panel: bottom-of-screen thumb zone where every gesture is resolved at a large size.
-// It shows the job Nick is standing next to. Starting a gesture locks him in place (sim.engage).
+// The action pad: right half of the bottom deck. It shows the job Nick is standing next to and
+// resolves it with a big gesture. Starting a gesture locks Nick in place (sim.engage).
 // With nothing in reach it shows what's in his free hand and a hint.
 import Phaser from 'phaser';
 import { GESTURES, ITEM_NAMES } from '../config';
@@ -8,25 +8,30 @@ import { drawIcon } from './art';
 import { COLORS, PANEL } from './layout';
 
 type Btn = { x: number; y: number; w: number; h: number; on: () => void };
+type Txt = (x: number, y: number, s: string, size: number, color?: string, style?: Phaser.Types.GameObjects.Text.TextStyle) => Phaser.GameObjects.Text;
 
-const HEADER_H = 44;
-const HOLD_R = 40;
+const HEADER_H = 40;
+const R = 36; // big button radius
+const L = PANEL.x;
+const T = PANEL.y;
+const CX = PANEL.x + PANEL.w / 2;
+const CY = PANEL.y + HEADER_H + (PANEL.h - HEADER_H) / 2 - 8; // widget center
 
 export class ActionPanel {
   private root: Phaser.GameObjects.Container;
   private bg: Phaser.GameObjects.Graphics;
-  private fx: Phaser.GameObjects.Graphics; // per-frame widget drawing
+  private fx: Phaser.GameObjects.Graphics;
+  private flashText: Phaser.GameObjects.Text;
   private texts: Phaser.GameObjects.GameObject[] = [];
   private sig = '';
   private buttons: Btn[] = [];
 
-  // Gesture state
   private progress = 0;
   private holding = false;
   private rubLastX = 0;
   private rubLastY = 0;
-  private rubFollowX = 0;
-  private swipeStart: { x: number; y: number; t: number } | null = null;
+  private rubFollowX = CX;
+  private swipeStart: { x: number; y: number } | null = null;
   private mashTaps: number[] = [];
   private shakeT = 0;
   private now = 0;
@@ -39,36 +44,32 @@ export class ActionPanel {
   constructor(
     private scene: Phaser.Scene,
     private sim: () => Sim,
-    private txt: (x: number, y: number, s: string, size: number, color?: string, style?: Phaser.Types.GameObjects.Text.TextStyle) => Phaser.GameObjects.Text,
+    private txt: Txt,
   ) {
     this.root = scene.add.container(0, 0).setDepth(50);
     this.bg = scene.add.graphics();
     this.fx = scene.add.graphics();
-    this.flashText = txt(PANEL.w / 2, PANEL.y + HEADER_H + 11, '', 13, '#ffffff', { fontStyle: 'bold' }).setOrigin(0.5).setDepth(51);
+    this.flashText = txt(CX, T + HEADER_H + 4, '', 12, '#ffffff', { fontStyle: 'bold' }).setOrigin(0.5);
     this.root.add([this.bg, this.fx, this.flashText]);
   }
-  private flashText: Phaser.GameObjects.Text;
 
   get active(): Interaction | null {
     return this.sim().interaction;
   }
 
-  // ------------------------------------------------------------ input
-  contains(_x: number, y: number) {
-    return y >= PANEL.y && y < PANEL.y + PANEL.h;
+  contains(x: number, y: number) {
+    return x >= PANEL.x - 4 && x < PANEL.x + PANEL.w + 6 && y >= PANEL.y - 2 && y < PANEL.y + PANEL.h + 2;
   }
 
+  // ------------------------------------------------------------ input
   pointerDown(x: number, y: number) {
     const it = this.active;
-    // Buttons first (choices, kids, put-it-down).
     const b = this.hit(x, y);
-    if (b && (!it || it.kind === 'choice' || it.kind === 'multi' || y < PANEL.y + HEADER_H)) {
+    if (b && (!it || it.kind === 'choice' || it.kind === 'multi')) {
       b.on();
       return;
     }
     if (!it) return;
-    const inWidget = y >= PANEL.y + HEADER_H - 6;
-    if (!inWidget) return;
     switch (it.kind) {
       case 'tap':
         this.done();
@@ -84,7 +85,7 @@ export class ActionPanel {
         this.sim().engage(true);
         break;
       case 'swipe':
-        this.swipeStart = { x, y, t: this.now };
+        this.swipeStart = { x, y };
         this.sim().engage(true);
         break;
       case 'mash':
@@ -101,7 +102,8 @@ export class ActionPanel {
       this.rubLastX = x;
       this.rubLastY = y;
       this.rubFollowX = x;
-      this.progress = Math.min(1, this.progress + d / (it.rubPx ?? GESTURES.bandaidRubPx));
+      // The pad is narrower than a full-width panel, so each px of rubbing counts a bit more.
+      this.progress = Math.min(1, this.progress + (d * 1.5) / (it.rubPx ?? GESTURES.bandaidRubPx));
       if (this.progress >= 1) this.done();
     }
     if (it.kind === 'swipe' && this.swipeStart) this.trySwipe(x, y, false);
@@ -112,7 +114,6 @@ export class ActionPanel {
     this.holding = false;
     if (it?.kind === 'swipe' && this.swipeStart) this.trySwipe(x, y, true);
     this.swipeStart = null;
-    // Letting go frees Nick to walk (a mash stays locked until the taps stop).
     if (it?.kind !== 'mash') this.sim().engage(false);
   }
 
@@ -125,11 +126,13 @@ export class ActionPanel {
       else if (it.kind === 'hold') {
         this.holding = true;
         this.sim().engage(true);
-      }
-      else if (it.kind === 'mash' && !repeat) this.mash();
+      } else if (it.kind === 'mash' && !repeat) this.mash();
       else if (it.kind === 'multi') {
         const i = it.multi!.findIndex((m) => !m.done);
         if (i >= 0) this.sim().tapMulti(i);
+      } else if (it.kind === 'choice') {
+        const i = it.options!.findIndex((o) => o.enabled);
+        if (i >= 0) this.sim().choose(i);
       } else return false;
       return true;
     }
@@ -159,13 +162,10 @@ export class ActionPanel {
   }
 
   private hit(x: number, y: number): Btn | undefined {
-    // Generous: grow every button to at least 44 x 44 around its center.
     return this.buttons.find((b) => {
       const w = Math.max(44, b.w);
       const h = Math.max(44, b.h);
-      const cx = b.x + b.w / 2;
-      const cy = b.y + b.h / 2;
-      return Math.abs(x - cx) <= w / 2 && Math.abs(y - cy) <= h / 2;
+      return Math.abs(x - (b.x + b.w / 2)) <= w / 2 && Math.abs(y - (b.y + b.h / 2)) <= h / 2;
     });
   }
 
@@ -184,8 +184,7 @@ export class ActionPanel {
     const s = this.swipeStart!;
     const dx = x - s.x;
     const dy = y - s.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist < GESTURES.swipeMinPx) {
+    if (Math.hypot(dx, dy) < GESTURES.swipeMinPx * 0.8) {
       if (final) this.swipeStart = null;
       return;
     }
@@ -219,16 +218,15 @@ export class ActionPanel {
 
     const sig = it
       ? `i${it.id}|${it.kind}|${it.multi?.map((m) => +m.done).join('')}|${it.options?.map((o) => +o.enabled).join('')}`
-      : `n|${sim.nick.hand}|${this.selectMode}|${sim.note}|${sim.steering}`;
+      : `n|${sim.nick.hand}|${this.selectMode}|${sim.note}`;
     if (sig !== this.sig) {
-      const newInteraction = it && !this.sig.startsWith(`i${it.id}|`);
+      const fresh = it && !this.sig.startsWith(`i${it.id}|`);
       this.sig = sig;
-      this.rebuild(newInteraction ? 'slide' : 'none');
+      this.rebuild(!!fresh);
     }
 
     if (it?.kind === 'hold') {
-      const holdSec = it.holdSec ?? 1;
-      if (this.holding) this.progress += dt / holdSec;
+      if (this.holding) this.progress += dt / (it.holdSec ?? 1);
       else this.progress = Math.max(0, this.progress - GESTURES.holdDecayPerSec * dt);
       if (this.progress >= 1) {
         this.done();
@@ -241,10 +239,10 @@ export class ActionPanel {
       this.progress = this.mashTaps.length / (it.mashTaps ?? GESTURES.flipMashTaps);
       if (sim.engaged && !this.mashTaps.some((t) => this.now - t < 0.8)) sim.engage(false);
     }
-    this.drawWidget(it);
+    this.draw(it);
   }
 
-  private clearTexts() {
+  private clear() {
     for (const t of this.texts) t.destroy();
     this.texts = [];
     this.buttons = [];
@@ -256,182 +254,136 @@ export class ActionPanel {
     return t;
   }
 
-  private addIcon(key: string, x: number, y: number, size: number) {
+  private addIcon(key: string, x: number, y: number, size: number, name = '') {
     const g = this.scene.add.graphics({ x, y });
     drawIcon(g, key, size);
+    g.setName(name);
     this.root.add(g);
     this.texts.push(g);
     return g;
   }
 
-  private rebuild(anim: 'slide' | 'none') {
-    this.clearTexts();
+  private rebuild(slide: boolean) {
+    this.clear();
     this.progress = 0;
     this.holding = false;
     this.mashTaps = [];
     this.swipeStart = null;
-    this.rubFollowX = PANEL.w / 2;
+    this.rubFollowX = CX;
     const it = this.active;
     const g = this.bg;
     g.clear();
-    const top = PANEL.y;
-    if (it) {
-      g.fillStyle(0x000000, 0.25).fillRoundedRect(6, top + 4, PANEL.w - 12, PANEL.h - 4, 18);
-      g.fillStyle(COLORS.panel, 1).fillRoundedRect(6, top, PANEL.w - 12, PANEL.h - 6, 18);
-      g.lineStyle(3, COLORS.accent, 1).strokeRoundedRect(6, top, PANEL.w - 12, PANEL.h - 6, 18);
-      this.addIcon(it.icon, 32, top + 23, 26);
-      this.addText(this.txt(54, top + 8, it.title, 18, '#22223b', { fontStyle: 'bold' }));
-      this.addText(this.txt(54, top + 28, it.hint, 12, '#6c5f5b'));
-      this.addText(this.txt(PANEL.w - 18, top + 12, 'walk away\nto skip', 10, '#a39b8b', { align: 'right' }).setOrigin(1, 0));
-      this.buildWidget(it);
-      if (anim === 'slide') {
-        this.root.y = 60;
-        this.root.alpha = 0.4;
-        this.scene.tweens.add({ targets: this.root, y: 0, alpha: 1, duration: 140, ease: 'Cubic.easeOut' });
-      }
-      return;
+    if (!it) {
+      this.root.y = 0;
+      this.root.alpha = 1;
+      return this.buildIdle();
     }
-    this.root.y = 0;
-    this.root.alpha = 1;
-    this.buildIdle();
+    g.fillStyle(0x000000, 0.25).fillRoundedRect(L, T + 3, PANEL.w, PANEL.h, 16);
+    g.fillStyle(COLORS.panel, 1).fillRoundedRect(L, T, PANEL.w, PANEL.h, 16);
+    g.lineStyle(3, COLORS.accent, 1).strokeRoundedRect(L, T, PANEL.w, PANEL.h, 16);
+    this.addIcon(it.icon, L + 20, T + 20, 22);
+    this.addText(this.txt(L + 36, T + 5, it.title, 13, '#22223b', { fontStyle: 'bold', wordWrap: { width: PANEL.w - 44 }, maxLines: 2 }));
+    this.addText(this.txt(L + 36, T + 23, it.hint, 10, '#6c5f5b'));
+    this.buildWidget(it);
+    if (slide) {
+      this.root.y = 30;
+      this.root.alpha = 0.4;
+      this.scene.tweens.add({ targets: this.root, y: 0, alpha: 1, duration: 120, ease: 'Cubic.easeOut' });
+    }
   }
 
   private buildWidget(it: Interaction) {
-    const cx = PANEL.w / 2;
-    const cy = PANEL.y + HEADER_H + (PANEL.h - HEADER_H) / 2 - 4;
     const g = this.bg;
-    const bh = PANEL.h - HEADER_H - 16;
-    switch (it.kind) {
-      case 'choice': {
-        const opts = it.options ?? [];
-        const bw = 172;
-        opts.forEach((o, i) => {
-          const x = cx - bw - 6 + i * (bw + 12);
-          const y = cy - bh / 2;
-          g.fillStyle(o.enabled ? 0xffffff : 0xece4d6, 1).fillRoundedRect(x, y, bw, bh, 16);
-          g.lineStyle(3, o.enabled ? COLORS.ink : 0xc9bda8, 1).strokeRoundedRect(x, y, bw, bh, 16);
-          const ic = this.addIcon(o.icon, x + bw / 2, y + 24, 30);
-          ic.alpha = o.enabled ? 1 : 0.35;
-          this.addText(
-            this.txt(x + bw / 2, y + 44, o.label, 16, o.enabled ? '#22223b' : '#a39b8b', {
-              fontStyle: 'bold',
-              align: 'center',
-              wordWrap: { width: bw - 16 },
-            }).setOrigin(0.5, 0),
-          );
-          this.addText(
-            this.txt(x + bw / 2, y + bh - 20, o.sub, 11, o.enabled ? '#6c5f5b' : '#a39b8b', { align: 'center' }).setOrigin(0.5, 0),
-          );
-          this.buttons.push({ x, y, w: bw, h: bh, on: () => o.enabled && this.sim().choose(i) });
-        });
-        break;
-      }
-      case 'multi': {
-        const m = it.multi ?? [];
-        const bw = Math.min(172, (PANEL.w - 40) / m.length - 8);
-        m.forEach((k, i) => {
-          const x = cx - (m.length * (bw + 12) - 12) / 2 + i * (bw + 12);
-          const y = cy - bh / 2;
-          g.fillStyle(k.done ? 0xd8f3dc : 0xffffff, 1).fillRoundedRect(x, y, bw, bh, 16);
-          g.lineStyle(3, k.done ? COLORS.good : COLORS.ink, 1).strokeRoundedRect(x, y, bw, bh, 16);
-          this.addText(this.txt(x + bw / 2, y + bh / 2 - 12, k.label, 22, '#22223b', { fontStyle: 'bold' }).setOrigin(0.5));
-          this.addText(this.txt(x + bw / 2, y + bh / 2 + 18, k.done ? '✓ Okay.' : 'TAP', 15, k.done ? '#2a9d8f' : '#6c5f5b').setOrigin(0.5));
-          this.buttons.push({ x, y, w: bw, h: bh, on: () => !k.done && this.sim().tapMulti(i) });
-        });
-        break;
-      }
-      case 'swipe':
-        this.addText(this.txt(cx, cy + 46, `SWIPE ${it.dir?.toUpperCase()}`, 13, '#6c5f5b', { fontStyle: 'bold' }).setOrigin(0.5));
-        break;
-      case 'tap':
-        this.addText(this.txt(cx + 96, cy - 6, 'TAP', 15, '#6c5f5b', { fontStyle: 'bold' }).setOrigin(0.5));
-        break;
-      case 'hold':
-        this.addText(this.txt(cx + 104, cy - 6, `HOLD\n${it.holdSec}s`, 15, '#6c5f5b', { fontStyle: 'bold' }).setOrigin(0.5));
-        break;
-      case 'mash':
-        this.addText(this.txt(cx - 110, cy - 6, 'TAP\nTAP\nTAP', 13, '#6c5f5b', { fontStyle: 'bold', align: 'center' }).setOrigin(0.5));
-        this.addText(this.txt(cx + 110, cy - 6, `×${it.mashTaps}\nfast`, 13, '#6c5f5b', { fontStyle: 'bold', align: 'center' }).setOrigin(0.5));
-        break;
-      case 'rub':
-        this.addText(this.txt(cx, cy + 46, 'RUB ← →', 13, '#6c5f5b', { fontStyle: 'bold' }).setOrigin(0.5));
-        break;
+    const bw = PANEL.w - 16;
+    const top = T + HEADER_H + 2;
+    const bh = (PANEL.h - HEADER_H - 10) / 2 - 3;
+    if (it.kind === 'choice' || it.kind === 'multi') {
+      const rows =
+        it.kind === 'choice'
+          ? (it.options ?? []).map((o, i) => ({ label: o.label, sub: o.sub, icon: o.icon, ok: o.enabled, done: false, on: () => o.enabled && this.sim().choose(i) }))
+          : (it.multi ?? []).map((m, i) => ({ label: m.label, sub: m.done ? '✓ Okay.' : 'Tap', icon: 'fight', ok: !m.done, done: m.done, on: () => !m.done && this.sim().tapMulti(i) }));
+      rows.forEach((r, i) => {
+        const x = L + 8;
+        const y = top + i * (bh + 6);
+        g.fillStyle(r.done ? 0xd8f3dc : r.ok ? 0xffffff : 0xece4d6, 1).fillRoundedRect(x, y, bw, bh, 12);
+        g.lineStyle(2.5, r.done ? COLORS.good : r.ok ? COLORS.ink : 0xc9bda8, 1).strokeRoundedRect(x, y, bw, bh, 12);
+        if (it.kind === 'choice') this.addIcon(r.icon, x + 22, y + bh / 2, 22).setAlpha(r.ok ? 1 : 0.35);
+        const tx = it.kind === 'choice' ? x + 42 : x + 12;
+        this.addText(this.txt(tx, y + 7, r.label, 14, r.ok || r.done ? '#22223b' : '#a39b8b', { fontStyle: 'bold' }));
+        this.addText(this.txt(tx, y + bh - 18, r.sub, 10, r.ok ? '#6c5f5b' : r.done ? '#2a9d8f' : '#a39b8b'));
+        this.buttons.push({ x, y, w: bw, h: bh, on: r.on });
+      });
+      return;
     }
-    if (it.kind !== 'choice' && it.kind !== 'multi') {
-      const ic = this.addIcon(it.icon, cx, cy - 6, 44);
-      ic.setName('bigIcon');
-    }
+    const label: Record<string, string> = {
+      tap: 'TAP',
+      hold: `HOLD ${it.holdSec}s`,
+      swipe: `SWIPE ${it.dir?.toUpperCase()}`,
+      rub: 'RUB ← →',
+      mash: '',
+    };
+    if (label[it.kind]) this.addText(this.txt(CX, CY + R + 14, label[it.kind], 11, '#6c5f5b', { fontStyle: 'bold' }).setOrigin(0.5));
+    this.addIcon(it.icon, CX, CY, 34, 'big');
   }
 
-  private drawWidget(it: Interaction | null) {
+  private draw(it: Interaction | null) {
     const g = this.fx;
     g.clear();
-    const cx = PANEL.w / 2 + (this.shakeT > 0 ? Math.sin(this.now * 70) * 6 : 0);
-    const cy = PANEL.y + HEADER_H + (PANEL.h - HEADER_H) / 2 - 4;
     this.flashText.setVisible(this.flashT > 0).setText(this.flash);
-    if (this.flashT > 0) {
-      g.fillStyle(COLORS.bad, Math.min(1, this.flashT * 2)).fillRoundedRect(PANEL.w / 2 - 70, PANEL.y + HEADER_H - 2, 140, 26, 10);
-    }
+    if (this.flashT > 0) g.fillStyle(COLORS.bad, Math.min(1, this.flashT * 2)).fillRoundedRect(CX - 60, T + HEADER_H - 7, 120, 22, 9);
     if (!it) return;
-    const big = this.texts.find((t) => t.name === 'bigIcon') as Phaser.GameObjects.Graphics | undefined;
+    const cx = CX + (this.shakeT > 0 ? Math.sin(this.now * 70) * 5 : 0);
+    const big = this.texts.find((t) => t.name === 'big') as Phaser.GameObjects.Graphics | undefined;
     switch (it.kind) {
       case 'tap': {
-        const pulse = 1 + Math.sin(this.now * 8) * 0.04;
-        g.fillStyle(COLORS.accent, 0.25).fillCircle(cx, cy - 6, (HOLD_R + 6) * pulse);
-        g.lineStyle(4, COLORS.accent, 1).strokeCircle(cx, cy - 6, HOLD_R * pulse);
-        if (big) big.x = cx;
+        const p = 1 + Math.sin(this.now * 8) * 0.04;
+        g.fillStyle(COLORS.accent, 0.25).fillCircle(cx, CY, (R + 6) * p);
+        g.lineStyle(4, COLORS.accent, 1).strokeCircle(cx, CY, R * p);
         break;
       }
       case 'hold':
       case 'mash': {
-        const r = HOLD_R;
-        g.fillStyle(this.holding ? 0xffe0c2 : 0xffffff, 1).fillCircle(cx, cy - 6, r);
-        g.lineStyle(10, 0xe8d5b0, 1).strokeCircle(cx, cy - 6, r);
+        g.fillStyle(this.holding ? 0xffe0c2 : 0xffffff, 1).fillCircle(cx, CY, R);
+        g.lineStyle(8, 0xe8d5b0, 1).strokeCircle(cx, CY, R);
         if (this.progress > 0) {
-          g.lineStyle(10, it.kind === 'hold' ? COLORS.good : COLORS.accent, 1);
+          g.lineStyle(8, it.kind === 'hold' ? COLORS.good : COLORS.accent, 1);
           g.beginPath();
-          g.arc(cx, cy - 6, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, this.progress), false);
+          g.arc(cx, CY, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, this.progress), false);
           g.strokePath();
         }
         if (it.kind === 'mash') {
           const n = it.mashTaps ?? 7;
           for (let i = 0; i < n; i++) {
             g.fillStyle(i < this.mashTaps.length ? COLORS.accent : 0xd6c6a8, 1);
-            g.fillCircle(cx + (i - (n - 1) / 2) * 18, cy + 50, 5);
+            g.fillCircle(cx + (i - (n - 1) / 2) * 16, CY + R + 14, 4.5);
           }
         }
-        if (big) {
-          big.x = cx;
-          big.setScale(this.holding || (it.kind === 'mash' && this.mashTaps.length) ? 0.92 : 1);
-        }
+        big?.setScale(this.holding || (it.kind === 'mash' && this.mashTaps.length) ? 0.92 : 1);
         break;
       }
       case 'rub': {
-        g.fillStyle(SKIN_PAD, 1).fillRoundedRect(30, cy - 38, PANEL.w - 60, 66, 28);
-        g.fillStyle(0xe5484d, 0.6 * (1 - this.progress)).fillCircle(PANEL.w / 2, cy - 6, 12);
-        g.fillStyle(0xe8d5b0, 1).fillRoundedRect(40, cy + 34, PANEL.w - 80, 8, 4);
-        g.fillStyle(COLORS.good, 1).fillRoundedRect(40, cy + 34, (PANEL.w - 80) * this.progress, 8, 4);
+        g.fillStyle(0xf6d2b4, 1).fillRoundedRect(L + 10, CY - 30, PANEL.w - 20, 56, 24);
+        g.fillStyle(0xe5484d, 0.6 * (1 - this.progress)).fillCircle(CX, CY - 2, 10);
+        g.fillStyle(0xe8d5b0, 1).fillRoundedRect(L + 14, CY + 32, PANEL.w - 28, 7, 3);
+        g.fillStyle(COLORS.good, 1).fillRoundedRect(L + 14, CY + 32, (PANEL.w - 28) * this.progress, 7, 3);
         if (big) {
-          big.x = Phaser.Math.Clamp(this.rubFollowX || PANEL.w / 2, 60, PANEL.w - 60);
-          big.y = cy - 6;
+          big.x = Phaser.Math.Clamp(this.rubFollowX, L + 30, L + PANEL.w - 30);
+          big.setScale(0.8);
         }
         break;
       }
       case 'swipe': {
-        const d = it.dir ?? 'down';
-        const v = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] }[d];
+        const v = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] }[it.dir ?? 'down'];
         const t = (this.now * 1.6) % 1;
-        g.fillStyle(0x3a86ff, 0.18).fillRoundedRect(cx - 110, cy - 50, 220, 86, 20);
+        g.fillStyle(0x3a86ff, 0.18).fillRoundedRect(L + 10, CY - 40, PANEL.w - 20, 80, 16);
         for (let i = 0; i < 3; i++) {
           const k = ((t + i / 3) % 1) - 0.5;
-          const ax = cx + v[0] * k * 120;
-          const ay = cy - 6 + v[1] * k * 56;
-          arrow(g, ax, ay, v[0], v[1], 16, 0x3a86ff, 1 - Math.abs(k) * 1.6);
+          arrow(g, cx + v[0] * k * 120, CY + v[1] * k * 50, v[0], v[1], 13, 0x3a86ff, 1 - Math.abs(k) * 1.6);
         }
         if (big) {
-          big.x = cx - v[0] * 70;
-          big.y = cy - 6 - v[1] * 24;
-          big.setScale(0.7);
+          big.x = cx - v[0] * 60;
+          big.y = CY - v[1] * 18;
+          big.setScale(0.6);
         }
         break;
       }
@@ -441,52 +393,46 @@ export class ActionPanel {
   private buildIdle() {
     const sim = this.sim();
     const g = this.bg;
-    const top = PANEL.y;
-    g.fillStyle(0x2b2d42, 0.92).fillRoundedRect(6, top, PANEL.w - 12, PANEL.h - 6, 18);
+    g.fillStyle(0x2b2d42, 0.95).fillRoundedRect(L, T, PANEL.w, PANEL.h, 16);
     if (this.selectMode) {
-      g.lineStyle(3, 0xe76f51, 1).strokeRoundedRect(6, top, PANEL.w - 12, PANEL.h - 6, 18);
-      this.addIcon('kayla', 40, top + 48, 36);
-      this.addText(this.txt(70, top + 22, 'Call Kayla', 20, '#ffffff', { fontStyle: 'bold' }));
-      this.addText(this.txt(70, top + 50, 'Tap the request she should handle.', 14, '#f2e9e4', { wordWrap: { width: 290 } }));
-      const b = { x: 120, y: top + 104, w: 150, h: 50, on: () => this.onCancelSelect() };
-      g.fillStyle(0x4a4e69, 1).fillRoundedRect(b.x, b.y, b.w, b.h, 14);
-      this.addText(this.txt(b.x + b.w / 2, b.y + b.h / 2, 'Never mind', 16, '#ffffff').setOrigin(0.5));
+      g.lineStyle(3, 0xe76f51, 1).strokeRoundedRect(L, T, PANEL.w, PANEL.h, 16);
+      this.addIcon('kayla', L + 24, T + 28, 28);
+      this.addText(this.txt(L + 46, T + 14, 'Call Kayla', 16, '#ffffff', { fontStyle: 'bold' }));
+      this.addText(this.txt(L + 12, T + 52, 'Tap the request she should handle.', 12, '#f2e9e4', { wordWrap: { width: PANEL.w - 24 } }));
+      const b = { x: L + 12, y: T + PANEL.h - 54, w: PANEL.w - 24, h: 44, on: () => this.onCancelSelect() };
+      g.fillStyle(0x4a4e69, 1).fillRoundedRect(b.x, b.y, b.w, b.h, 12);
+      this.addText(this.txt(b.x + b.w / 2, b.y + b.h / 2, 'Never mind', 15, '#ffffff').setOrigin(0.5));
       this.buttons.push(b);
       return;
     }
     const h = sim.nick.hand;
-    const hy = top + 14;
-    this.addText(this.txt(20, hy, 'FREE HAND', 11, '#c9c9d6', { fontStyle: 'bold' }));
-    g.fillStyle(0x3d405b, 1).fillRoundedRect(16, hy + 18, 220, 50, 14);
+    this.addText(this.txt(L + 12, T + 8, 'FREE HAND', 10, '#c9c9d6', { fontStyle: 'bold' }));
+    g.fillStyle(0x3d405b, 1).fillRoundedRect(L + 8, T + 24, PANEL.w - 16, 40, 12);
     if (h) {
-      this.addIcon(h === 'nora' ? 'nora' : h === 'phone' ? 'phone' : h, 42, hy + 43, 26);
-      const label = h === 'nora' ? 'Nora (on the hip)' : h === 'phone' ? 'Phone (your mother-in-law)' : ITEM_NAMES[h];
-      this.addText(this.txt(64, hy + 43, label, 14, '#ffffff', { wordWrap: { width: 166 } }).setOrigin(0, 0.5));
+      this.addIcon(h === 'nora' ? 'nora' : h === 'phone' ? 'phone' : h, L + 30, T + 44, 22);
+      const label = h === 'nora' ? 'Nora (on the hip)' : h === 'phone' ? 'Phone (mother-in-law)' : ITEM_NAMES[h];
+      this.addText(this.txt(L + 48, T + 44, label, 13, '#ffffff').setOrigin(0, 0.5));
     } else {
-      this.addText(this.txt(28, hy + 43, 'Empty. (Other hand: coffee.)', 13, '#8d8fa8').setOrigin(0, 0.5));
+      this.addText(this.txt(L + 18, T + 44, 'Empty. (Other: coffee.)', 12, '#8d8fa8').setOrigin(0, 0.5));
     }
+    let y = T + 70;
     if (h && h !== 'nora' && h !== 'phone') {
-      const b = { x: 244, y: hy + 18, w: 130, h: 50, on: () => this.sim().dropHand() };
-      g.fillStyle(0x4a4e69, 1).fillRoundedRect(b.x, b.y, b.w, b.h, 14);
-      this.addText(this.txt(b.x + b.w / 2, b.y + b.h / 2, 'Put it down', 15, '#ffffff').setOrigin(0.5));
+      const b = { x: L + 8, y, w: PANEL.w - 16, h: 36, on: () => this.sim().dropHand() };
+      g.fillStyle(0x4a4e69, 1).fillRoundedRect(b.x, b.y, b.w, b.h, 12);
+      this.addText(this.txt(b.x + b.w / 2, b.y + b.h / 2, 'Put it down', 14, '#ffffff').setOrigin(0.5));
       this.buttons.push(b);
+      y += 42;
     }
-    const line = sim.note
-      ? sim.note
-      : sim.steering
-        ? 'Walking…'
-        : 'Hold anywhere on the house to walk there.\nStop next to a kid or a station to help.';
+    const line = sim.note ?? 'Walk with the arrows. Stand next to a kid or a station to help.';
     this.addText(
-      this.txt(PANEL.w / 2, top + 112, line, sim.note ? 15 : 13, sim.note ? '#ffd166' : '#a5a7c4', {
+      this.txt(CX, (y + T + PANEL.h) / 2, line, sim.note ? 13 : 11, sim.note ? '#ffd166' : '#a5a7c4', {
         align: 'center',
-        wordWrap: { width: PANEL.w - 40 },
+        wordWrap: { width: PANEL.w - 20 },
         fontStyle: sim.note ? 'bold' : 'normal',
       }).setOrigin(0.5),
     );
   }
 }
-
-const SKIN_PAD = 0xf6d2b4;
 
 function arrow(g: Phaser.GameObjects.Graphics, x: number, y: number, vx: number, vy: number, s: number, c: number, a: number) {
   if (a <= 0) return;

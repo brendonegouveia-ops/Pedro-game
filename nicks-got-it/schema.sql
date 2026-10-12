@@ -6,10 +6,12 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 CREATE INDEX IF NOT EXISTS runs_started ON runs (started_at);
 
-CREATE TABLE IF NOT EXISTS scores (
+-- One row per run that ended: the week it was in and the clock time reached that week.
+CREATE TABLE IF NOT EXISTS week_scores (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
-  minutes INTEGER NOT NULL,      -- game minutes survived since 9:00 AM (== real seconds)
+  week INTEGER NOT NULL,
+  minutes INTEGER NOT NULL,      -- game minutes since 9:00 AM reached in that week
   created_at INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS scores_rank ON scores (minutes DESC, created_at ASC);
+CREATE INDEX IF NOT EXISTS week_scores_rank ON week_scores (week DESC, minutes DESC, created_at ASC);

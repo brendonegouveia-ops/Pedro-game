@@ -1,15 +1,16 @@
 import Phaser from 'phaser';
 import { ABILITIES, COFFEE, KAYLA_OUT_OF_CHARGES } from '../config';
 import { COUCH_POS, ROOM_NAMES, STATIONS, STATION_IDS, type RoomId, type StationId } from '../sim/house';
-import { REQUEST_LABEL, Sim, type ActorId, type Request, type SimEvent } from '../sim/sim';
+import { REQUEST_LABEL, Sim, clockString, type ActorId, type Request, type SimEvent } from '../sim/sim';
 import { CHAR_HEIGHT, drawActor, drawGrill, drawIcon, drawMomFace, drawSpot, drawWorld } from './art';
-import { ACTOR_SCALE, BAR, COLORS, FONT, H, HUD, PANEL, W, WORLD, inWorld, toScreen, toWorld } from './layout';
+import { ACTOR_SCALE, BAR, COLORS, DPAD, FONT, H, HUD, PANEL, W, WORLD, inWorld, toScreen } from './layout';
 import { ActionPanel } from './panel';
 
 export interface SceneHooks {
   sfx: (name: string) => void;
   haptic: (p: number | number[]) => void;
   gameOver: (sim: Sim) => void;
+  won: (sim: Sim) => void;
   pause: () => void;
 }
 
@@ -84,13 +85,15 @@ export class GameScene extends Phaser.Scene {
   private selectBanner!: Phaser.GameObjects.Text;
   private alarmT = 0;
   private alarmText!: Phaser.GameObjects.Text;
+  private weekText!: Phaser.GameObjects.Text;
   private handIcon!: Phaser.GameObjects.Graphics;
   private handLabel!: Phaser.GameObjects.Text;
   private handKey = '';
   private now = 0;
   private lastNow = 0;
-  private steerPointer = false;
-  private finger: Pt | null = null; // world point being held
+  private roles = new Map<number, 'dpad' | 'panel'>();
+  private dpadDir: Pt | null = null;
+  private dpadG!: Phaser.GameObjects.Graphics;
   private keysDown = new Set<string>();
 
   constructor() {
@@ -137,25 +140,28 @@ export class GameScene extends Phaser.Scene {
     this.events.on('panel-sfx', (n: string) => this.hooks?.sfx(n));
 
     this.fxTop = this.add.graphics().setDepth(65);
+    this.dpadG = this.add.graphics().setDepth(55);
     this.buildOverlays();
 
+    // Two thumbs: one on the D-pad, one on the action pad. Each pointer keeps the role it started with.
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       const w = cam.getWorldPoint(p.x, p.y);
-      this.onDown(w.x, w.y);
+      this.onDown(p.id, w.x, w.y);
     });
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (!p.isDown) return;
       const w = cam.getWorldPoint(p.x, p.y);
-      if (this.steerPointer) this.steerTo(w.x, w.y);
-      else this.panel.pointerMove(w.x, w.y);
+      const role = this.roles.get(p.id);
+      if (role === 'dpad') this.dpadTo(w.x, w.y);
+      else if (role === 'panel') this.panel.pointerMove(w.x, w.y);
     });
     const up = (p: Phaser.Input.Pointer) => {
       const w = cam.getWorldPoint(p.x, p.y);
-      this.onUp(w.x, w.y);
+      this.onUp(p.id, w.x, w.y);
     };
     this.input.on('pointerup', up);
     this.input.on('pointerupoutside', up);
-    this.input.on('gameout', () => this.onUp(-1, -1));
+    this.input.on('gameout', () => this.releaseInput());
 
     this.input.keyboard?.on('keydown', (e: KeyboardEvent) => this.onKey(e, true));
     this.input.keyboard?.on('keyup', (e: KeyboardEvent) => this.onKey(e, false));
@@ -173,13 +179,14 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ------------------------------------------------------------ run control
-  startRun(seed: number) {
-    this.sim = new Sim(seed);
+  startRun(seed: number, week = 1) {
+    this.sim = new Sim(seed, week);
     this.running = true;
     this.panel.selectMode = false;
-    this.steerPointer = false;
-    this.finger = null;
+    this.roles.clear();
+    this.dpadDir = null;
     this.keysDown.clear();
+    this.weekText.setText(`WEEK ${week} · GAME NIGHT 5:00`);
     this.textQueue = [];
     this.textT = 0;
     this.toastT = 0;
@@ -193,8 +200,8 @@ export class GameScene extends Phaser.Scene {
 
   // Called when the game pauses: let go of everything held.
   releaseInput() {
-    this.steerPointer = false;
-    this.finger = null;
+    this.roles.clear();
+    this.dpadDir = null;
     this.keysDown.clear();
     this.sim?.setMoveTarget(null);
     this.sim?.setMoveDir(null);
@@ -219,7 +226,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ------------------------------------------------------------ input
-  private onDown(x: number, y: number) {
+  private onDown(id: number, x: number, y: number) {
     if (!this.running) return;
     const sim = this.sim;
     if (y >= BAR.y) return this.onBar(x);
@@ -227,34 +234,62 @@ export class GameScene extends Phaser.Scene {
       sim.answerUhHuh();
       return;
     }
-    if (this.panel.contains(x, y)) return this.panel.pointerDown(x, y);
-    if (!inWorld(x, y)) return;
-    if (this.panel.selectMode) {
+    if (Math.hypot(x - DPAD.cx, y - DPAD.cy) <= DPAD.r + 10) {
+      this.roles.set(id, 'dpad');
+      this.dpadTo(x, y);
+      return;
+    }
+    if (this.panel.contains(x, y)) {
+      this.roles.set(id, 'panel');
+      return this.panel.pointerDown(x, y);
+    }
+    if (inWorld(x, y) && this.panel.selectMode) {
       const b = this.nearestBubble(x, y, 32);
       if (b != null) {
         sim.callKayla(b);
         this.panel.selectMode = false;
       }
-      return;
     }
-    // Anywhere on the house: hold to walk toward your finger.
-    this.steerPointer = true;
-    this.steerTo(x, y);
   }
 
-  private steerTo(x: number, y: number) {
-    this.finger = toWorld(x, y);
-    this.sim.setMoveTarget(this.finger);
+  // D-pad: 4 arrows; a thumb between two arrows walks diagonally. Small dead zone in the middle.
+  private dpadTo(x: number, y: number) {
+    const dx = x - DPAD.cx;
+    const dy = y - DPAD.cy;
+    let dir: Pt | null = null;
+    if (Math.hypot(dx, dy) >= 10) {
+      const ax = Math.abs(dx);
+      const ay = Math.abs(dy);
+      if (ax > ay * 2.2) dir = { x: Math.sign(dx), y: 0 };
+      else if (ay > ax * 2.2) dir = { x: 0, y: Math.sign(dy) };
+      else dir = { x: Math.sign(dx), y: Math.sign(dy) };
+    }
+    const changed = (dir?.x ?? 0) !== (this.dpadDir?.x ?? 0) || (dir?.y ?? 0) !== (this.dpadDir?.y ?? 0);
+    this.dpadDir = dir;
+    if (changed) {
+      this.applyMove();
+      if (dir) this.hooks?.haptic(6);
+    }
   }
 
-  private onUp(x: number, y: number) {
-    if (this.steerPointer) {
-      this.steerPointer = false;
-      this.finger = null;
-      this.sim.setMoveTarget(null);
-      return;
+  private applyMove() {
+    if (this.dpadDir) return this.sim.setMoveDir(this.dpadDir);
+    let dx = 0;
+    let dy = 0;
+    for (const k of this.keysDown) {
+      dx += MOVE_KEYS[k][0];
+      dy += MOVE_KEYS[k][1];
     }
-    this.panel.pointerUp(x, y);
+    this.sim.setMoveDir(dx || dy ? { x: dx, y: dy } : null);
+  }
+
+  private onUp(id: number, x: number, y: number) {
+    const role = this.roles.get(id);
+    this.roles.delete(id);
+    if (role === 'dpad') {
+      this.dpadDir = null;
+      this.applyMove();
+    } else if (role === 'panel') this.panel.pointerUp(x, y);
   }
 
   private onBar(x: number) {
@@ -283,13 +318,7 @@ export class GameScene extends Phaser.Scene {
     if (MOVE_KEYS[e.code] && !panelArrows) {
       if (down) this.keysDown.add(e.code);
       else this.keysDown.delete(e.code);
-      let dx = 0;
-      let dy = 0;
-      for (const k of this.keysDown) {
-        dx += MOVE_KEYS[k][0];
-        dy += MOVE_KEYS[k][1];
-      }
-      this.sim.setMoveDir(dx || dy ? { x: dx, y: dy } : null);
+      this.applyMove();
       e.preventDefault();
       return;
     }
@@ -345,6 +374,12 @@ export class GameScene extends Phaser.Scene {
           break;
         case 'resolved':
           this.popBubble(e.req.id, true);
+          break;
+        case 'won':
+          this.running = false;
+          this.releaseInput();
+          this.panel.selectMode = false;
+          window.setTimeout(() => this.hooks.won(this.sim), 700);
           break;
         case 'gameover':
           this.running = false;
@@ -433,7 +468,7 @@ export class GameScene extends Phaser.Scene {
 
   private buildHud() {
     this.clockText = this.txt(12, 6, '9:00 AM', 28, '#ffffff', { fontStyle: 'bold' }).setDepth(61);
-    this.txt(14, 42, 'SATURDAY', 9, '#9a9cc0', { fontStyle: 'bold' }).setDepth(61);
+    this.weekText = this.txt(14, 42, 'WEEK 1 · GAME NIGHT 5:00', 9, '#ffd166', { fontStyle: 'bold' }).setDepth(61);
     this.txt(176, 4, 'CHAOS', 9, '#9a9cc0', { fontStyle: 'bold' }).setDepth(61);
     this.chaosText = this.txt(378, 4, '0', 9, '#ffffff', { fontStyle: 'bold' }).setOrigin(1, 0).setDepth(61);
     this.txt(176, 38, 'COFFEE', 9, '#9a9cc0', { fontStyle: 'bold' }).setDepth(61);
@@ -565,16 +600,8 @@ export class GameScene extends Phaser.Scene {
     const g = this.dyn;
     g.clear();
 
-    // Finger marker: where Nick is headed while you hold.
-    if (this.finger && this.running) {
-      const f = toScreen(this.finger.x, this.finger.y);
-      const n = toScreen(sim.nick.x, sim.nick.y);
-      g.fillStyle(0xffffff, 0.25).fillCircle(f.x, f.y, 16);
-      g.lineStyle(2, 0xffffff, 0.8).strokeCircle(f.x, f.y, 16);
-      g.fillStyle(0xffffff, 0.6);
-      const len = Math.hypot(f.x - n.x, f.y - n.y);
-      for (let d = 18; d < len - 16; d += 10) g.fillCircle(n.x + ((f.x - n.x) * d) / len, n.y + ((f.y - n.y) * d) / len, 1.6);
-    }
+    this.renderDpad();
+    if (sim.goalMin !== 480) this.weekText.setText(`WEEK ${sim.week} · GAME NIGHT ${clockString(sim.goalMin).replace(' PM', '')}`);
 
     this.renderHighlights(g);
 
@@ -625,6 +652,33 @@ export class GameScene extends Phaser.Scene {
     this.renderNap();
     this.renderHud();
     this.renderOverlays(dt);
+  }
+
+  private renderDpad() {
+    const g = this.dpadG;
+    g.clear();
+    const { cx, cy, r } = DPAD;
+    g.fillStyle(0x2b2d42, 0.95).fillCircle(cx, cy, r);
+    g.lineStyle(2, 0x4a4e69, 1).strokeCircle(cx, cy, r);
+    const d = this.dpadDir;
+    const arms: [number, number][] = [
+      [0, -1],
+      [0, 1],
+      [-1, 0],
+      [1, 0],
+    ];
+    for (const [ax, ay] of arms) {
+      const on = !!d && (d.x === ax && ax !== 0 ? true : d.y === ay && ay !== 0);
+      const bx = cx + ax * 44;
+      const by = cy + ay * 44;
+      g.fillStyle(on ? COLORS.accent : 0x4a4e69, 1).fillRoundedRect(bx - 23, by - 23, 46, 46, 12);
+      g.fillStyle(0xffffff, on ? 1 : 0.85);
+      const s = 11;
+      const px = -ay;
+      const py = ax;
+      g.fillTriangle(bx + ax * s, by + ay * s, bx - ax * s * 0.6 + px * s, by - ay * s * 0.6 + py * s, bx - ax * s * 0.6 - px * s, by - ay * s * 0.6 - py * s);
+    }
+    g.fillStyle(0x3d405b, 1).fillCircle(cx, cy, 14);
   }
 
   private drawActorFx(v: ActorView, id: ActorId) {

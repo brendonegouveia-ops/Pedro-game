@@ -49,22 +49,27 @@ const touch = async (type, x, y) => {
   const p = await toPage(x, y);
   await cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x: p.x, y: p.y }] });
 };
-const tapPanel = async (x = 195, y = 700) => {
+// Action pad geometry (src/game/layout.ts PANEL + panel.ts): center and the two stacked rows.
+const PX = 275;
+const PY = 694;
+const ROW1 = 669;
+const ROW2 = 729;
+const tapPanel = async (x = PX, y = PY) => {
   await touch('touchStart', x, y);
   await touch('touchEnd', x, y);
 };
 const WORLD_Y = 74;
 
-// Hold-to-walk: press on the grill (design coords) and keep holding until Nick is in the backyard.
+// D-pad: hold "up" from the living room until Nick walks out the slider into the backyard.
 await sim(() => (window.__nick.scene.timeScale = 1));
 const start = await sim(() => ({ ...window.__nick.scene.sim.nick }));
-await touch('touchStart', 332, WORLD_Y + 62);
+await touch('touchStart', 82, 682 - 44);
 await page.waitForFunction(() => window.__nick.scene.sim.nick.room === 'backyard', null, { timeout: 30000 });
 await page.screenshot({ path: `${OUT}/03-walking.png` });
-await touch('touchEnd', 332, WORLD_Y + 62);
+await touch('touchEnd', 82, 682 - 44);
 await page.waitForTimeout(200);
 const after = await sim(() => ({ ...window.__nick.scene.sim.nick, steering: window.__nick.scene.sim.steering }));
-if (after.steering) fail('still steering after release');
+if (after.steering) fail('still walking after releasing the D-pad');
 console.log('walked', start.room, '->', after.room, `(${Math.round(after.x)},${Math.round(after.y)})`);
 await sim(() => (window.__nick.scene.timeScale = 0.25));
 
@@ -113,48 +118,48 @@ const check = async (label, id) => {
   const id = await inject({ kind: 'watch_this', owner: 'evelyn' });
   await waitPanel('hold');
   await page.screenshot({ path: `${OUT}/04-action-panel.png` });
-  await touch('touchStart', 195, 700);
+  await touch('touchStart', PX, PY);
   await page.waitForTimeout(300);
   if (!(await sim(() => window.__nick.scene.sim.engaged))) fail('holding did not lock Nick in place');
   await page.waitForFunction((id) => !window.__nick.scene.sim.requests.some((r) => r.id === id), id, { timeout: 30000 }).catch(() => {});
-  await touch('touchEnd', 195, 700);
+  await touch('touchEnd', PX, PY);
   await check('hold', id);
 }
 { // CHOICE -> RUB (band-aid)
   const id = await inject({ kind: 'booboo', owner: 'tyler', hand: 'bandaid' });
   await waitPanel('choice');
   await page.screenshot({ path: `${OUT}/04b-choice.png` });
-  await tapPanel(103, 700);
+  await tapPanel(PX, ROW1);
   await waitPanel('rub');
-  await touch('touchStart', 80, 700);
-  for (let i = 0; i < 12 && !(await gone(id)); i++) {
-    for (let x = 80; x <= 310; x += 46) await touch('touchMove', x, 700 + (i % 2) * 4);
-    for (let x = 310; x >= 80; x -= 46) await touch('touchMove', x, 700);
+  await touch('touchStart', 180, PY);
+  for (let i = 0; i < 14 && !(await gone(id)); i++) {
+    for (let x = 180; x <= 370; x += 38) await touch('touchMove', x, PY + (i % 2) * 4);
+    for (let x = 370; x >= 180; x -= 38) await touch('touchMove', x, PY);
   }
-  await touch('touchEnd', 80, 700);
+  await touch('touchEnd', 180, PY);
   await check('choice+rub', id);
 }
 { // SWIPE (spill under Nick's feet)
   const id = await inject({ kind: 'spill', owner: 'eloise', x: 300, y: 310, dir: 'left' });
   await waitPanel('swipe');
   await page.screenshot({ path: `${OUT}/04c-swipe.png` });
-  await touch('touchStart', 280, 700);
-  for (let x = 260; x >= 120; x -= 35) await touch('touchMove', x, 702);
-  await touch('touchEnd', 120, 702);
+  await touch('touchStart', 360, PY);
+  for (let x = 340; x >= 190; x -= 30) await touch('touchMove', x, PY + 2);
+  await touch('touchEnd', 190, PY + 2);
   await check('swipe', id);
 }
 { // CHOICE (screen time: No)
   const id = await inject({ kind: 'screen_time', owner: 'evelyn' });
   await waitPanel('choice');
-  await tapPanel(287, 700);
+  await tapPanel(PX, ROW2);
   await check('choice', id);
 }
 { // MULTI (fight: tap each kid)
   const id = await inject({ kind: 'fight', owner: 'evelyn', kids: ['evelyn', 'tyler'] });
   await waitPanel('multi');
   await page.screenshot({ path: `${OUT}/04d-fight.png` });
-  await tapPanel(103, 700);
-  await tapPanel(287, 700);
+  await tapPanel(PX, ROW1);
+  await tapPanel(PX, ROW2);
   await check('multi', id);
 }
 { // MASH (grill flip): walk to the grill by holding on it, then mash
@@ -162,15 +167,12 @@ const check = async (label, id) => {
     const s = window.__nick.scene.sim;
     s.requests.push({ id: 7777, kind: 'flip', owner: 'grill', room: 'backyard', patience: 999, left: 999 });
   });
-  await sim(() => (window.__nick.scene.timeScale = 1));
-  await touch('touchStart', 332, WORLD_Y + 62);
-  await page.waitForFunction(() => { const n = window.__nick.scene.sim.nick; return Math.hypot(n.x - 332, n.y - 62) < 8; }, null, { timeout: 30000 });
-  await touch('touchEnd', 332, WORLD_Y + 62);
+  await sim(() => Object.assign(window.__nick.scene.sim.nick, { x: 332, y: 84 }));
   await waitPanel('mash');
   await page.screenshot({ path: `${OUT}/04e-mash.png` });
   await sim(() => (window.__nick.scene.timeScale = 0.05)); // CDP taps are ~1 s apart under software GL
   for (let i = 0; i < 9; i++) {
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [await toPage(195, 700)] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [await toPage(PX, PY)] });
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   }
   await check('mash', 7777);
@@ -180,7 +182,7 @@ const check = async (label, id) => {
 // Jump to the nap with Nora, Tyler and Eloise in play.
 await sim(() => {
   const s = window.__nick.scene.sim;
-  while (s.t < 245 && !s.over) {
+  while (s.gm < 245 && !s.over) {
     s.update(0.1);
     s.chaos = Math.min(s.chaos, 40);
     window.__nick.scene.handleEvents?.(s.drainEvents());
@@ -200,7 +202,7 @@ if (!(await sim(() => window.__nick.scene.sim.frozen))) fail('dad joke did not f
 // FaceTime.
 await sim(() => {
   const s = window.__nick.scene.sim;
-  while (s.t < 361.5 && !s.over) {
+  while (s.gm < 361.5 && !s.over) {
     s.update(0.1);
     s.chaos = Math.min(s.chaos, 40);
   }
@@ -246,6 +248,23 @@ if (hasApi) {
   if (!(await page.$('#endBoard li.me'))) fail('own score not highlighted');
   await page.screenshot({ path: `${OUT}/09b-leaderboard.png` });
 } else console.log('no /api: leaderboard checks skipped');
+
+// Make it to 5:00 PM -> game night card, next week unlocked.
+await page.evaluate(() => { document.getElementById('end').removeAttribute('data-open'); });
+await page.tap('#titleBtn').catch(() => {});
+await page.evaluate(() => document.getElementById('startBtn').click());
+await page.waitForFunction(() => window.__nick.scene.running);
+await sim(() => {
+  const s = window.__nick.scene.sim;
+  s.t = 479.5 / 1.5;
+  s.chaos = 10;
+});
+await page.waitForSelector('#won[data-open]', { timeout: 15000 });
+await page.screenshot({ path: `${OUT}/09c-game-night.png` });
+console.log('won:', await page.textContent('#wonTitle'), '| next:', await page.textContent('#nextBtn'));
+await page.tap('#nextBtn');
+await page.waitForFunction(() => window.__nick.scene.running && window.__nick.scene.sim.week === 2);
+console.log('started week', await sim(() => window.__nick.scene.sim.week));
 
 // Landscape phone -> rotate overlay.
 await page.setViewportSize({ width: 844, height: 390 });

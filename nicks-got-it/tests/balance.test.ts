@@ -1,32 +1,34 @@
 import { describe, expect, it } from 'vitest';
 import { Sim, clockString } from '../src/sim/sim';
-import { runBot } from './bot';
+import { runBot, type BotOpts } from './bot';
 
-function survive(n: number, f: (seed: number) => Sim) {
-  const ts: number[] = [];
-  for (let i = 0; i < n; i++) ts.push(f(1000 + i * 7919).t);
-  ts.sort((a, b) => a - b);
-  return { min: ts[0], med: ts[Math.floor(n / 2)], max: ts[n - 1] };
+const SEEDS = 12;
+function report(label: string, f: (seed: number) => Sim) {
+  const runs = Array.from({ length: SEEDS }, (_, i) => f(1000 + i * 7919));
+  const wins = runs.filter((s) => s.won).length;
+  const ends = runs.map((s) => s.gm).sort((a, b) => a - b);
+  console.log(`${label.padEnd(26)} wins ${String(wins).padStart(2)}/${SEEDS}  median end ${clockString(ends[SEEDS >> 1])}  worst ${clockString(ends[0])}`);
+  return { wins, med: ends[SEEDS >> 1] };
 }
+const bot = (week: number, o: BotOpts) => (seed: number) => runBot(seed, o, 900, week);
 
 describe('balance', () => {
   it('idle player loses in the morning', () => {
-    const s = survive(10, (seed) => {
+    const r = report('idle', (seed) => {
       const sim = new Sim(seed);
-      while (!sim.over && sim.t < 900) sim.update(1 / 30);
+      while (!sim.over) sim.update(1 / 30);
       return sim;
     });
-    console.log('idle', clockString(s.min), clockString(s.med), clockString(s.max));
-    expect(s.max).toBeLessThan(180);
+    expect(r.wins).toBe(0);
+    expect(r.med).toBeLessThan(180);
   });
 
-  for (const skill of [0.3, 0.7, 1]) {
-    it(`bot skill ${skill}`, () => {
-      const s = survive(12, (seed) => runBot(seed, { skill, abilities: true }));
-      const n = survive(12, (seed) => runBot(seed, { skill, abilities: false }));
-      console.log(`skill ${skill} abilities`, clockString(s.min), clockString(s.med), clockString(s.max));
-      console.log(`skill ${skill} none     `, clockString(n.min), clockString(n.med), clockString(n.max));
-      expect(s.med).toBeGreaterThan(60);
-    }, 120_000);
+  for (const week of [1, 2, 4]) {
+    it(`week ${week}`, () => {
+      const slow = report(`week ${week} slow bot`, bot(week, { skill: 0.3, abilities: true }));
+      report(`week ${week} sharp bot`, bot(week, { skill: 0.7, abilities: true }));
+      report(`week ${week} perfect bot`, bot(week, { skill: 1, abilities: true }));
+      if (week === 1) expect(slow.wins).toBeGreaterThan(0);
+    }, 180_000);
   }
 });

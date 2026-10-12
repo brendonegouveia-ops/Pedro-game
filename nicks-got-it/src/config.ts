@@ -8,6 +8,38 @@ export const GAME = {
   startHour: 9, // 9:00 AM Saturday
 };
 
+// Game clock: game minutes per real second. 9:00 AM -> 5:00 PM takes 480 / 1.5 = 320 s (~5.3 min).
+// Every timer (request patience, cooldowns, FaceTime, cries) stays in real seconds.
+export const CLOCK = { minutesPerSec: 1.5 };
+
+// Weeks: Nick has to make it to 5:00 PM (Kayla's home, he's off to game night at Carlson's).
+// Each week the same day gets harder.
+export const WEEKS = {
+  goalMin: 480, // 5:00 PM
+  patienceStart: 1.1, // week 1 is an on-ramp: 10% more patience
+  patienceStep: 0.05, // then 5% less per week
+  patienceMin: 0.65,
+  rateStep: 0.12, // requests come 12% faster per week
+  decayStep: 0.08, // chaos drains 8% slower per week
+  decayMin: 0.4,
+  fightStep: 0.25,
+  lateFromWeek: 3, // from this week Kayla texts "running late" at 4:45 and the goal slides to 5:30
+  lateBy: 30,
+  // Generic game nights only (no brand names).
+  themes: [
+    'Board game night',
+    'Poker night',
+    'Trivia night',
+    'Euchre night',
+    'Charades night',
+    'Video game night',
+    'Dominoes night',
+    'Spades night',
+    'Puzzle night',
+    'Bunco night',
+  ],
+};
+
 // ---------------------------------------------------------------- cast
 export const CAST = {
   nick: { name: 'Nick', catchphrase: 'I got it, I got it.' },
@@ -25,8 +57,10 @@ export const MOVE = {
   speed: 190, // Nick, design px per second
   lowCoffeeSpeed: 0.6, // "40% slower" below the coffee threshold
   radius: 10, // collision radius
-  reach: 40, // how close Nick must stand to a kid or spill to help
-  stationReach: 24, // stations: stand on them
+  reach: 46, // how close Nick must stand to a kid or spill to help
+  stationReach: 34, // stations
+  stickyReach: 12, // the current job stays up until Nick is this much further away
+  cornerAssist: 18, // px: clipping a doorframe slides Nick around it
   kidSpeed: 55,
   dogSpeed: 75,
 };
@@ -34,7 +68,7 @@ export const MOVE = {
 // ---------------------------------------------------------------- core loop
 export const PATIENCE = {
   baseSec: 8,
-  shrinkPerHour: 0.06, // patience x (1 - 0.06 * hours since 9 AM)
+  shrinkPerHour: 0.05, // patience x (1 - 0.05 * hours since 9 AM)
   minFactor: 0.5,
   crySpeedupPerKid: 0.2, // each OTHER crying kid speeds your timers up 20%
   // Multipliers on base patience. Fetch / multi-stop jobs get more room.
@@ -139,7 +173,7 @@ export const GRILL = {
   // Burgers are on during these windows (t ranges). Lunch rush at 12:00, dinner from 5:00 PM.
   windows: [
     [180, 240],
-    [480, Infinity],
+    [390, Infinity], // 3:30 PM: feed them before game night
   ] as [number, number][],
   flipEverySec: 10,
   flipPatienceSec: 8,
@@ -191,12 +225,14 @@ export const TIMELINE = {
   noraWakes: NAP.endT, // 2:30 PM
   faceTime: FACETIME.t, // 3:00 PM
   rampStart: 360, // after 3:00 PM: +15% request rate per game hour
-  runningLate: 540, // 6:00 PM
+  leaving: 450, // 4:30 PM
+  runningLate: 465, // 4:45 PM (from week 3)
 };
 
 // ---------------------------------------------------------------- copy
 export const TEXTS = {
-  start: { from: 'Kayla', body: 'Thank you SO much babe 💕 Nora’s show ends at 10. Back by 6!' },
+  start: { from: 'Kayla', body: 'Thank you SO much babe 💕 Back by 5 so you can make game night!' },
+  leaving: { from: 'Kayla', body: 'Leaving now! Don’t let them burn the house down before game night 😘' },
   noraJoins: { from: 'Kayla', body: 'Her show ended. She’s all yours 😘' },
   dogJoins: { from: 'Kayla', body: 'Did you latch the crate? The crate has a latch.' },
   lunchRush: { from: 'Kayla', body: 'Lunch?? Please not just goldfish crackers' },
@@ -204,7 +240,7 @@ export const TEXTS = {
   nap: { from: 'Kayla', body: 'Nap at 1!! Couch is fine. DON’T let Eloise bark' },
   noraWakes: { from: 'Kayla', body: 'Is she up? How was the nap?' },
   faceTime: { from: "Kayla's mom", body: 'FaceTime… ☎️' },
-  runningLate: { from: 'Kayla', body: 'running late 🙃' },
+  runningLate: { from: 'Kayla', body: 'running late 🙃 like 30 min' },
   // Ambient texts, drawn at random once in a while.
   ambient: [
     'how’s it going?? 😊',

@@ -7,8 +7,10 @@ export const H = 844;
 export const HUD = { y: 0, h: 72 };
 // The whole floor plan is always on screen: every request timer stays visible.
 export const WORLD = { x: 0, y: 74, w: W_SIM.w, h: W_SIM.h };
-// Thumb zone: Action Panel + ability bar (bottom ~29% of the screen).
-export const PANEL = { x: 0, y: 598, w: 390, h: 168 };
+// Thumb zone (bottom ~29% of the screen): D-pad on the left, action pad on the right, ability bar below.
+export const DECK = { y: 598, h: 168 };
+export const DPAD = { cx: 82, cy: 682, r: 74 };
+export const PANEL = { x: 166, y: 600, w: 218, h: 164 };
 export const BAR = { x: 0, y: 770, w: 390, h: 74 };
 
 export const toScreen = (x: number, y: number) => ({ x: x + WORLD.x, y: y + WORLD.y });

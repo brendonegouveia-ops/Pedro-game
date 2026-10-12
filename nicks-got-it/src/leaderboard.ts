@@ -2,7 +2,8 @@
 // with no backend (local vite dev, offline) the game still plays and shows "offline".
 export interface ScoreRow {
   name: string;
-  minutes: number;
+  week: number;
+  minutes: number; // clock time reached in that week (game minutes since 9:00 AM)
 }
 
 const TIMEOUT_MS = 6000;
@@ -38,6 +39,7 @@ export async function topScores(): Promise<ScoreRow[] | null> {
 export async function submitScore(
   runId: string,
   name: string,
+  week: number,
   minutes: number,
 ): Promise<{ rank: number; scores: ScoreRow[] } | { error: string } | null> {
   const ac = new AbortController();
@@ -47,7 +49,7 @@ export async function submitScore(
       method: 'POST',
       signal: ac.signal,
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ runId, name, minutes }),
+      body: JSON.stringify({ runId, name, week, minutes }),
     });
     const body = (await res.json().catch(() => null)) as { rank: number; scores: ScoreRow[]; error?: string } | null;
     if (!res.ok) return { error: body?.error ?? `HTTP ${res.status}` };

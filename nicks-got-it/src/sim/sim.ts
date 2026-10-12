@@ -30,6 +30,8 @@ import {
   UPPY,
   WANDER,
   CAST,
+  CLOCK,
+  WEEKS,
 } from '../config';
 import {
   COUCH_POS,
@@ -38,6 +40,7 @@ import {
   SHOE_SPOTS,
   STATIONS,
   STATION_IDS,
+  blocked,
   dist,
   floorPoint,
   hops,
@@ -161,7 +164,8 @@ export type SimEvent =
   | { type: 'resolved'; req: Request }
   | { type: 'expired'; req: Request }
   | { type: 'nora_woke' }
-  | { type: 'gameover' };
+  | { type: 'gameover' }
+  | { type: 'won' };
 
 export type ChaosCause = 'cry' | 'smoke' | 'thermostat' | 'facetime' | 'nap' | 'default';
 
@@ -219,9 +223,12 @@ export function clockString(t: number): string {
 
 export class Sim {
   readonly rng: Rng;
-  t = 0;
+  t = 0; // real seconds since 9:00 AM
   chaos = 0;
   over = false;
+  won = false;
+  readonly week: number;
+  goalMin: number = WEEKS.goalMin;
   chaosBy: Record<ChaosCause, number> = { cry: 0, smoke: 0, thermostat: 0, facetime: 0, nap: 0, default: 0 };
   stats: Stats = {
     handled: 0,
@@ -285,8 +292,9 @@ export class Sim {
   private fired = new Set<string>();
   private jokeBag: number[] = [];
 
-  constructor(seed = Date.now()) {
+  constructor(seed = Date.now(), week = 1) {
     this.rng = new Rng(seed);
+    this.week = Math.max(1, Math.floor(week));
     const mk = (id: ActorId, room: RoomId, present: boolean): Actor => {
       const p = floorPoint(this.rng, room);
       return {
@@ -312,25 +320,39 @@ export class Sim {
       tyler: mk('tyler', 'backyard', false),
       eloise: mk('eloise', 'garage', false),
     };
-    this.thermostatAt = this.rng.range(...THERMOSTAT.firstT);
+    this.thermostatAt = this.rng.range(...THERMOSTAT.firstT) / CLOCK.minutesPerSec;
     this.nextAmbient = this.rng.range(40, 70);
   }
 
   // ------------------------------------------------------------ derived
+  // Game minutes since 9:00 AM (the clock, the timeline, the score).
+  get gm(): number {
+    return this.t * CLOCK.minutesPerSec;
+  }
   get clock(): string {
-    return clockString(this.t);
+    return clockString(this.gm);
+  }
+  get theme(): string {
+    return WEEKS.themes[(this.week - 1) % WEEKS.themes.length];
+  }
+  private get wk(): number {
+    return this.week - 1;
   }
   get frozen(): boolean {
     return this.freezeLeft > 0;
   }
   hoursIn(): number {
-    return this.t / 60;
+    return this.gm / 60;
   }
   rateMult(): number {
-    return 1 + RATE_AFTER_3PM_PER_HOUR * Math.max(0, (this.t - TIMELINE.rampStart) / 60);
+    return (1 + RATE_AFTER_3PM_PER_HOUR * Math.max(0, (this.gm - TIMELINE.rampStart) / 60)) * (1 + WEEKS.rateStep * this.wk);
   }
   patienceFactor(): number {
-    return Math.max(PATIENCE.minFactor, 1 - PATIENCE.shrinkPerHour * this.hoursIn());
+    const week = Math.max(WEEKS.patienceMin, WEEKS.patienceStart - WEEKS.patienceStep * this.wk);
+    return Math.max(PATIENCE.minFactor, 1 - PATIENCE.shrinkPerHour * this.hoursIn()) * week;
+  }
+  decayRate(): number {
+    return CHAOS.decayPerSec * Math.max(WEEKS.decayMin, 1 - WEEKS.decayStep * this.wk);
   }
   walkSpeed(): number {
     return this.nick.coffee < COFFEE.slowBelow ? MOVE.lowCoffeeSpeed : 1;
@@ -385,6 +407,15 @@ export class Sim {
     this.chaosBy[cause] += n;
     if (this.chaos >= CHAOS.max) this.gameOver();
   }
+  private makeItToGameNight() {
+    this.won = true;
+    this.over = true;
+    this.interaction = null;
+    this.engaged = false;
+    this.emit({ type: 'won' });
+    this.emit({ type: 'haptic', pattern: [40, 40, 40, 40, 160] });
+  }
+
   private gameOver() {
     if (this.over) return;
     this.over = true;
@@ -433,12 +464,12 @@ export class Sim {
     if (thermo) this.addChaos(CHAOS.thermostatPerSec * tdt, 'thermostat');
     const crying = this.cryingKids().length;
     if (crying > 0) this.addChaos(CHAOS.cryPerSec * crying * tdt, 'cry');
-    else if (!thermo) this.chaos = Math.max(0, this.chaos - CHAOS.decayPerSec * dt);
+    else if (!thermo) this.chaos = Math.max(0, this.chaos - this.decayRate() * dt);
   }
 
   // ------------------------------------------------------------ timeline
   private once(key: string, at: number, fn: () => void) {
-    if (this.t >= at && !this.fired.has(key)) {
+    if (this.gm >= at && !this.fired.has(key)) {
       this.fired.add(key);
       fn();
     }
@@ -491,7 +522,14 @@ export class Sim {
       }
     });
     this.once('facetime', TIMELINE.faceTime, () => this.startFacetime());
-    this.once('late', TIMELINE.runningLate, () => this.text(TEXTS.runningLate));
+    this.once('leaving', TIMELINE.leaving, () => this.text(TEXTS.leaving));
+    if (this.week >= WEEKS.lateFromWeek)
+      this.once('late', TIMELINE.runningLate, () => {
+        this.goalMin += WEEKS.lateBy;
+        this.text(TEXTS.runningLate);
+        this.toast('Game night just got pushed back. Hold on.');
+      });
+    if (this.gm >= this.goalMin && !this.over) this.makeItToGameNight();
 
     if (this.t >= this.nextAmbient) {
       this.nextAmbient = this.t + this.rng.range(80, 140);
@@ -542,7 +580,25 @@ export class Sim {
       const len = Math.hypot(dx, dy);
       if (len > 0.001) {
         const step = Math.min(MOVE.speed * this.walkSpeed() * dt, maxStep);
-        const p = moveCircle(n.x, n.y, (dx / len) * step, (dy / len) * step, MOVE.radius);
+        let p = moveCircle(n.x, n.y, (dx / len) * step, (dy / len) * step, MOVE.radius);
+        // Corner rounding (D-pad): if a doorframe stops Nick, slide him sideways toward the opening.
+        if (this.moveDir && Math.hypot(p.x - n.x, p.y - n.y) < step * 0.3) {
+          const ux = dx / len;
+          const uy = dy / len;
+          for (let k = 2; k <= MOVE.cornerAssist; k += 2) {
+            let slid = false;
+            for (const side of [1, -1]) {
+              const ox = -uy * k * side;
+              const oy = ux * k * side;
+              if (blocked(n.x + ox, n.y + oy, MOVE.radius)) continue;
+              if (blocked(n.x + ox + ux * 4, n.y + oy + uy * 4, MOVE.radius)) continue;
+              p = moveCircle(n.x, n.y, -uy * side * step, ux * side * step, MOVE.radius);
+              slid = true;
+              break;
+            }
+            if (slid) break;
+          }
+        }
         n.moving = Math.hypot(p.x - n.x, p.y - n.y) > 0.01;
         if (Math.abs(p.x - n.x) > 0.05) n.facing = p.x < n.x ? -1 : 1;
         n.x = p.x;
@@ -562,18 +618,16 @@ export class Sim {
   // Pick the job Nick is standing next to. Requests win ties against stations.
   private updateFocus() {
     if (this.over) return;
-    if (this.steering) {
-      this.interaction = null;
-      this.note = null;
-      return;
-    }
     const n = this.nick;
     let best: { score: number; target: Target; built: Built } | null = null;
     let note: { score: number; text: string } | null = null;
+    const curKey = this.interaction ? targetKey(this.interaction.target) : null;
     const consider = (target: Target, d: number, bonus: number, reach = MOVE.reach) => {
-      if (d > reach) return;
+      // The job already up stays up a little past its reach (no flicker while shuffling).
+      const current = curKey === targetKey(target);
+      if (d > reach + (current ? MOVE.stickyReach : 0)) return;
       const built = this.build(target);
-      const score = d - bonus;
+      const score = d - bonus - (current ? 18 : 0);
       if (typeof built === 'string') {
         if (!note || score < note.score) note = { score, text: built };
       } else if (!best || score < best.score) best = { score, target, built };
@@ -911,7 +965,7 @@ export class Sim {
     else {
       patience = PATIENCE.baseSec * (PATIENCE.kind as Record<string, number>)[kind] * this.patienceFactor();
       const cranky = owner === 'nora' || extra.kids?.includes('nora');
-      if (cranky && this.t < this.noraCrankyUntil) patience *= NAP.crankyPatience;
+      if (cranky && this.gm < this.noraCrankyUntil) patience *= NAP.crankyPatience;
     }
     const r: Request = { id: this.nextId++, kind, owner, room, patience, left: patience, ...extra };
     this.requests.push(r);
@@ -1103,7 +1157,7 @@ export class Sim {
 
   private updateFights(tdt: number) {
     if (tdt <= 0) return;
-    const p = 1 - Math.pow(1 - FIGHT.chancePerSec, tdt);
+    const p = 1 - Math.pow(1 - FIGHT.chancePerSec * (1 + WEEKS.fightStep * this.wk), tdt);
     const rooms = new Map<RoomId, KidId[]>();
     for (const k of KID_IDS) {
       const a = this.actors[k];
@@ -1279,11 +1333,11 @@ export class Sim {
 
   // ------------------------------------------------------------ grill / thermostat
   private updateGrill(tdt: number) {
-    const on = GRILL.windows.some(([a, b]) => this.t >= a && this.t < b);
+    const on = GRILL.windows.some(([a, b]) => this.gm >= a && this.gm < b);
     if (on && !this.grill.on) {
       this.grill.on = true;
       this.grill.cook = GRILL.flipEverySec;
-      this.toast(this.t < 300 ? 'LUNCH RUSH. Burgers on.' : 'Dinner. Burgers on.');
+      this.toast(this.gm < 300 ? 'LUNCH RUSH. Burgers on.' : 'Early dinner. Burgers on.');
       this.emit({ type: 'sfx', name: 'sizzle' });
     } else if (!on && this.grill.on) {
       this.grill.on = false;

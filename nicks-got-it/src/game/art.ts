@@ -488,11 +488,15 @@ export function drawWorld(g: G, ox: number, oy: number) {
   g.fillStyle(0xe9d8a6, 1).fillRect(X(0), Y(0), 390, 6).fillRect(X(0), Y(0), 6, 160).fillRect(X(384), Y(0), 6, 160);
   g.fillStyle(0xd4c08a, 1);
   for (let x = 0; x < 390; x += 14) g.fillRect(X(x), Y(0), 2, 6);
+  // hedge along the back fence (not walkable)
+  g.fillStyle(0x3f7d43, 1).fillRect(X(6), Y(6), 378, 30);
+  g.fillStyle(0x4f9a52, 1);
+  for (let x = 14; x < 384; x += 22) g.fillCircle(X(x), Y(20 + ((x * 7) % 9)), 15);
   // sandbox
-  g.fillStyle(0xa47148, 1).fillRect(X(30), Y(30), 64, 50);
-  g.fillStyle(0xf2dfa7, 1).fillRect(X(34), Y(34), 56, 42);
-  g.fillStyle(0xe63946, 1).fillCircle(X(50), Y(50), 5);
-  g.fillStyle(0x3a86ff, 1).fillRect(X(66), Y(56), 10, 8);
+  g.fillStyle(0xa47148, 1).fillRect(X(30), Y(56), 64, 50);
+  g.fillStyle(0xf2dfa7, 1).fillRect(X(34), Y(60), 56, 42);
+  g.fillStyle(0xe63946, 1).fillCircle(X(50), Y(76), 5);
+  g.fillStyle(0x3a86ff, 1).fillRect(X(66), Y(82), 10, 8);
   // tree canopy (shade)
   g.fillStyle(0x000000, 0.12).fillCircle(X(196), Y(52), 40);
   g.fillStyle(0x4f9a52, 1).fillCircle(X(186), Y(44), 34);
@@ -560,9 +564,9 @@ export function drawWorld(g: G, ox: number, oy: number) {
   // Walls: thick and dark, outer frame included, with a lighter cap line on top.
   g.fillStyle(0x2b1e20, 1);
   g.fillRect(X(0), Y(158), 6, 362).fillRect(X(384), Y(158), 6, 362).fillRect(X(0), Y(514), 390, 6);
-  for (const w of WALLS) g.fillRect(X(w.x - 2), Y(w.y - 2), w.w + 4, w.h + 4);
+  for (const w of WALLS) if (w.y > 0) g.fillRect(X(w.x - 2), Y(w.y - 2), w.w + 4, w.h + 4);
   g.fillStyle(0x5c4447, 1);
-  for (const w of WALLS) g.fillRect(X(w.x), Y(w.y), w.w, 2);
+  for (const w of WALLS) if (w.y > 0) g.fillRect(X(w.x), Y(w.y), w.w, 2);
   // Door frames: a post at each side of every opening.
   g.fillStyle(0x8d5a3b, 1);
   for (const d of DOORS) {

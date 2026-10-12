@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import './style.css';
-import { CAST, END_LINES } from './config';
+import { CAST, END_LINES, WEEKS } from './config';
 import { isMuted, play, resumeAudio, setMuted, suspendAudio, unlockAudio } from './audio';
 import { buzz, hapticsSupported, setHaptics } from './haptics';
 import { beginRun, submitScore, topScores, type ScoreRow } from './leaderboard';
@@ -58,7 +58,7 @@ const game = new Phaser.Game({
   height: H * R,
   backgroundColor: '#1d1f2b',
   scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
-  input: { activePointers: 1, touch: { capture: true } },
+  input: { activePointers: 2, touch: { capture: true } }, // two thumbs: D-pad + action pad
   render: { antialias: true, roundPixels: false },
   disableContextMenu: true,
   banner: false,
@@ -75,6 +75,7 @@ game.events.once('scene-ready', () => {
     sfx: play,
     haptic: buzz,
     gameOver: showEnd,
+    won: showWon,
     pause: () => pause(),
   };
 });
@@ -95,8 +96,30 @@ function syncButtons() {
   }
   const hb = $('hapticsBtn');
   hb.textContent = hapticsSupported() ? (saved.haptics ? '📳 Haptics on' : '📴 Haptics off') : '📴 No haptics here';
-  $('bestLine').textContent = saved.best > 0 ? `Your best: ${clockString(saved.best)}` : '';
+  $('bestLine').textContent = saved.bestWeek > 0 ? `Your best: ${runLabel(saved.bestWeek, saved.bestMin)}` : '';
+  saved.week = Math.min(Math.max(1, saved.week), saved.unlocked);
+  $('weekLabel').textContent = `Week ${saved.week}`;
+  $('weekTheme').textContent = `${themeOf(saved.week)} at Carlson’s, 5:00 PM`;
+  ($('weekPrev') as HTMLButtonElement).disabled = saved.week <= 1;
+  ($('weekNext') as HTMLButtonElement).disabled = saved.week >= saved.unlocked;
 }
+
+function themeOf(week: number) {
+  return WEEKS.themes[(week - 1) % WEEKS.themes.length];
+}
+function runLabel(week: number, minutes: number) {
+  return `Week ${week}, ${clockString(minutes)}`;
+}
+$('weekPrev').addEventListener('click', () => {
+  saved.week = Math.max(1, saved.week - 1);
+  save(saved);
+  syncButtons();
+});
+$('weekNext').addEventListener('click', () => {
+  saved.week = Math.min(saved.unlocked, saved.week + 1);
+  save(saved);
+  syncButtons();
+});
 syncButtons();
 
 function toggleSound() {
@@ -144,7 +167,8 @@ function startGame() {
   playing = true;
   runId = null;
   void beginRun().then((id) => (runId = id));
-  scene.startRun((Date.now() ^ (Math.random() * 0x7fffffff)) >>> 0);
+  close('won');
+  scene.startRun((Date.now() ^ (Math.random() * 0x7fffffff)) >>> 0, saved.week);
   play('pop');
   buzz(15);
 }
@@ -231,24 +255,64 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
+// ---------------------------------------------------------------- made it
+function showWon(sim: Sim) {
+  playing = false;
+  lastSim = sim;
+  const next = sim.week + 1;
+  saved.unlocked = Math.max(saved.unlocked, next);
+  saved.week = next;
+  recordBest(next, 0);
+  save(saved);
+  $('wonKicker').textContent = `Week ${sim.week} · ${clockString(sim.goalMin)}`;
+  $('wonTitle').textContent = `Nick made it to ${sim.theme.toLowerCase()}!`;
+  $('wonQuote').textContent = `“Go. Have fun. I’ve got it.” — ${CAST.kayla.name}`;
+  const s = sim.stats;
+  $('wonStats').innerHTML = [
+    ['handled', s.handled],
+    ['cries', s.cries],
+    ['dad jokes', s.jokes],
+    ['chaos left', Math.round(sim.chaos)],
+  ]
+    .map(([k, v]) => `<li><b>${v}</b>${k}</li>`)
+    .join('');
+  $('nextBtn').textContent = `Week ${next}: ${themeOf(next).toLowerCase()}`;
+  open('won');
+  play('good');
+}
+$('nextBtn').addEventListener('click', startGame);
+$('wonTitleBtn').addEventListener('click', () => {
+  close('won');
+  open('start');
+  syncButtons();
+});
+
 // ---------------------------------------------------------------- end card
 function endQuote(sim: Sim): string {
   const lines = END_LINES[sim.topCause()] ?? END_LINES.default;
   return `“${lines[Math.floor(Math.random() * lines.length)]}” — ${CAST.kayla.name}`;
 }
 
+function recordBest(week: number, minutes: number): boolean {
+  const better = week > saved.bestWeek || (week === saved.bestWeek && minutes > saved.bestMin);
+  if (better) {
+    saved.bestWeek = week;
+    saved.bestMin = minutes;
+    save(saved);
+  }
+  return better;
+}
+
 function showEnd(sim: Sim) {
   playing = false;
   lastSim = sim;
-  const minutes = Math.floor(sim.t);
-  const isBest = minutes > saved.best;
-  if (isBest) {
-    saved.best = minutes;
-    save(saved);
-  }
+  const minutes = Math.floor(sim.gm);
+  const isBest = recordBest(sim.week, minutes);
+  $('endKicker').textContent = `Week ${sim.week} · no game night`;
   $('endQuote').textContent = endQuote(sim);
   $('endTime').textContent = clockString(minutes);
-  $('endBest').textContent = isBest ? 'New personal best!' : `Your best: ${clockString(saved.best)}`;
+  $('endBest').textContent = isBest ? 'New personal best!' : `Your best: ${runLabel(saved.bestWeek, saved.bestMin)}`;
+  $('againBtn').textContent = `Retry week ${sim.week}`;
   const s = sim.stats;
   const stats: [string, number | string][] = [
     ['handled', s.handled],
@@ -289,8 +353,9 @@ $('submitForm').addEventListener('submit', async (e) => {
     btn.disabled = false;
     return;
   }
-  const minutes = Math.floor(lastSim.t);
-  const res = await submitScore(runId, name, minutes);
+  const minutes = Math.floor(lastSim.gm);
+  const week = lastSim.week;
+  const res = await submitScore(runId, name, week, minutes);
   if (!res) {
     $('submitMsg').textContent = 'Leaderboard is offline. Try again in a bit.';
     btn.disabled = false;
@@ -301,11 +366,11 @@ $('submitForm').addEventListener('submit', async (e) => {
     return;
   }
   $('submitMsg').textContent = `You’re #${res.rank}.`;
-  renderBoard($('endBoard'), res.scores, { name, minutes });
+  renderBoard($('endBoard'), res.scores, { name, week, minutes });
 });
 
 // rows: undefined = loading, null = backend unreachable.
-function renderBoard(el: HTMLElement, rows: ScoreRow[] | null | undefined, me: { name: string; minutes: number } | null) {
+function renderBoard(el: HTMLElement, rows: ScoreRow[] | null | undefined, me: { name: string; week: number; minutes: number } | null) {
   if (rows === undefined) {
     el.innerHTML = '<li class="empty"><span class="n">Loading…</span></li>';
     return;
@@ -321,9 +386,9 @@ function renderBoard(el: HTMLElement, rows: ScoreRow[] | null | undefined, me: {
   let marked = false;
   el.innerHTML = rows
     .map((r) => {
-      const mine = !marked && me && r.name === me.name && r.minutes === me.minutes;
+      const mine = !marked && me && r.name === me.name && r.week === me.week && r.minutes === me.minutes;
       if (mine) marked = true;
-      return `<li class="${mine ? 'me' : ''}"><span class="n">${escapeHtml(r.name)}</span><span class="t">${clockString(r.minutes)}</span></li>`;
+      return `<li class="${mine ? 'me' : ''}"><span class="n">${escapeHtml(r.name)}</span><span class="t">Wk ${r.week} · ${clockString(r.minutes)}</span></li>`;
     })
     .join('');
 }

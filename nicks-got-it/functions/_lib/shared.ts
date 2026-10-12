@@ -4,10 +4,12 @@ export interface Env {
 }
 
 export const TOP_N = 20;
-export const MAX_MINUTES = 24 * 60; // 9:00 AM to 9:00 AM next day
+export const MAX_WEEK = 999;
+export const MAX_MINUTES = 600; // a week ends at 5:00 PM (5:30 when Kayla runs late): 480-510
 export const RUN_TTL_MS = 6 * 60 * 60 * 1000;
-// 1 game minute = 1 real second. Allow 10% for clock skew and frame-time rounding.
-export const MIN_REAL_MS_PER_MINUTE = 900;
+// The game clock runs 1.5 game minutes per real second (src/config.ts CLOCK).
+// Allow 10% for clock skew and frame-time rounding.
+export const MIN_REAL_MS_PER_MINUTE = (1000 / 1.5) * 0.9;
 
 export function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -30,8 +32,8 @@ export function cleanName(raw: unknown): string | null {
 
 export async function top(db: D1Database) {
   const { results } = await db
-    .prepare('SELECT name, minutes FROM scores ORDER BY minutes DESC, created_at ASC LIMIT ?')
+    .prepare('SELECT name, week, minutes FROM week_scores ORDER BY week DESC, minutes DESC, created_at ASC LIMIT ?')
     .bind(TOP_N)
-    .all<{ name: string; minutes: number }>();
+    .all<{ name: string; week: number; minutes: number }>();
   return results ?? [];
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHAOS, FACETIME, KAYLA_CALL_REPLIES, MOVE, PATIENCE, UPPY } from '../src/config';
+import { CHAOS, CLOCK, FACETIME, KAYLA_CALL_REPLIES, MOVE, PATIENCE, UPPY } from '../src/config';
 import { ROOM_IDS, ROOM_RECTS, STATIONS, STATION_IDS, WALLS, blocked, dist, hops, roomPath, type StationId } from '../src/sim/house';
 import { Sim, clockString, type Request } from '../src/sim/sim';
 
@@ -116,13 +116,25 @@ describe('house', () => {
 });
 
 describe('jobs', () => {
-  it('stopping next to a station offers its job; walking hides it', () => {
+  it('next to a station its job is up (even mid-walk); walking away hides it', () => {
     const sim = quiet();
     walkToStation(sim, 'snacks');
     expect(sim.interaction?.title).toMatch(/Grab snack/);
-    sim.setMoveTarget({ x: 300, y: 300 });
+    sim.setMoveDir({ x: 1, y: 0 });
     sim.update(1 / 60);
+    expect(sim.interaction?.title).toMatch(/Grab snack/);
+    step(sim, 1);
     expect(sim.interaction).toBe(null);
+  });
+
+  it('D-pad: holding up at a doorframe slides Nick through the opening', () => {
+    const sim = quiet();
+    // In the kitchen, just right of the back door's right frame (opening x 48-120).
+    sim.nick.x = 126;
+    sim.nick.y = 200;
+    sim.setMoveDir({ x: 0, y: -1 });
+    step(sim, 1.5);
+    expect(sim.nick.room).toBe('backyard');
   });
 
   it('fetch: grab at the counter, deliver at the kid', () => {
@@ -285,7 +297,7 @@ describe('requests', () => {
 describe('systems', () => {
   it('burnt burger: smoke alarm +15 and wakes a napping Nora (+10)', () => {
     const sim = quiet();
-    sim.t = 239;
+    sim.t = 239 / CLOCK.minutesPerSec;
     sim.actors.nora.present = true;
     step(sim, 2);
     expect(sim.nap.state).toBe('asleep');
@@ -299,7 +311,7 @@ describe('systems', () => {
 
   it('FaceTime: phone in hand for 20 s, each missed uh-huh is +5', () => {
     const sim = quiet();
-    sim.t = 359.9;
+    sim.t = 359.9 / CLOCK.minutesPerSec;
     sim.nick.hand = 'snack';
     step(sim, 0.2);
     expect(sim.nick.hand).toBe('phone');
@@ -355,9 +367,30 @@ describe('systems', () => {
     expect(sim.requests.some((r) => r.kind === 'thermostat')).toBe(false);
   });
 
+  it('making it to 5:00 PM wins the week; week 3+ gets pushed to 5:30', () => {
+    const a = quiet();
+    a.t = 479 / CLOCK.minutesPerSec;
+    step(a, 1);
+    expect(a.won).toBe(true);
+    const b = quiet(2);
+    (b as unknown as { week: number }).week = 3;
+    b.t = 479 / CLOCK.minutesPerSec;
+    step(b, 1);
+    expect(b.won).toBe(false);
+    expect(b.goalMin).toBe(510);
+  });
+
+  it('later weeks are harder: less patience, more requests', () => {
+    const w1 = new Sim(1, 1);
+    const w4 = new Sim(1, 4);
+    expect(w4.patienceFactor()).toBeLessThan(w1.patienceFactor());
+    expect(w4.rateMult()).toBeGreaterThan(w1.rateMult());
+    expect(w4.decayRate()).toBeLessThan(w1.decayRate());
+  });
+
   it('the run ends at 100 chaos and the timeline fires on schedule', () => {
     const sim = new Sim(5);
-    step(sim, 61, 0.05);
+    step(sim, 61 / CLOCK.minutesPerSec, 0.05);
     expect(sim.actors.nora.present).toBe(true);
     sim.addChaos(200, 'default');
     expect(sim.over).toBe(true);

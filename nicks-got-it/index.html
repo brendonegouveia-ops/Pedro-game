@@ -21,7 +21,7 @@
         <div class="card">
           <p class="kicker">Saturday · 9:00 AM</p>
           <h1>NICK'S<br />GOT IT</h1>
-          <p class="tag">Kayla’s out for the day.<br />Nick said <b>“I got it.”</b></p>
+          <p class="tag">Kayla’s out until 5. Game night’s at 5.<br />Nick said <b>“I got it.”</b></p>
           <svg class="nick" viewBox="-40 -110 80 116" aria-hidden="true">
             <ellipse cx="0" cy="0" rx="22" ry="5" fill="#0002" />
             <rect x="-14" y="-4" width="11" height="4" rx="2" fill="#5b3a1e" /><rect x="3" y="-4" width="11" height="4" rx="2" fill="#5b3a1e" />
@@ -40,6 +40,11 @@
             <path d="M-4 -82 Q0 -78 4 -82" stroke="#2b2033" stroke-width="1.4" fill="none" />
           </svg>
           <p class="catch">“I got it, I got it.”</p>
+          <div class="weekpick">
+            <button id="weekPrev" class="small" aria-label="Previous week">◀</button>
+            <div class="wk"><b id="weekLabel">Week 1</b><span id="weekTheme"></span></div>
+            <button id="weekNext" class="small" aria-label="Next week">▶</button>
+          </div>
           <button id="startBtn" class="big">Start</button>
           <div class="row">
             <button id="soundBtn" class="small" aria-pressed="false">🔇 Sound off</button>
@@ -54,14 +59,15 @@
         <div class="card scroll">
           <h2>How to play</h2>
           <ul class="help">
-            <li><b>Survive the day.</b> 1 second = 1 minute. The run ends when <b>Chaos</b> hits 100. Your score is the time on the clock.</li>
-            <li><b>Walk:</b> touch and hold anywhere on the house and Nick walks toward your finger (through doorways on his own). Let go to stop. Desktop: click and hold, or WASD / arrow keys.</li>
-            <li><b>Help:</b> stop next to a kid, a spill or a station and the <b>Action Panel</b> slides up at the bottom: <b>tap</b>, <b>hold</b>, <b>rub</b>, <b>swipe</b> or <b>mash</b>. He can’t move mid-gesture. Everyone else’s timer keeps running. Walk away to skip.</li>
+            <li><b>Make it to 5:00 PM.</b> That’s when Kayla’s home and Nick can go to game night. If <b>Chaos</b> hits 100 first, game night’s off. Each week the same Saturday gets harder.</li>
+            <li><b>Walk</b> with the arrow pad (left thumb). Press between two arrows to walk diagonally. Desktop: WASD or the arrow keys.</li>
+            <li><b>Help:</b> walk up to a kid, a spill or a station and its job shows on the <b>action pad</b> (right thumb): <b>tap</b>, <b>hold</b>, <b>rub</b>, <b>swipe</b> or <b>mash</b>. Nick can’t walk mid-gesture. Everyone else’s timer keeps running.</li>
+            <li><b>On my way:</b> grab what a kid asked for and their timer slows down. Holding a snack, drink or band-aid? A crying kid will take it.</li>
             <li>One free hand. The other is coffee. Snacks, juice and sippy cups come from the <b>Kitchen</b>; band-aids from the <b>Garage</b>. Coffee under 25% makes Nick 40% slower: hold at the coffee maker to refill.</li>
             <li>Expired requests make kids cry. Crying kids make everyone else’s timers run 20% faster.</li>
             <li><b>Dad Joke</b> (1): freezes every timer for 3 s. <b>Call Kayla</b> (2): she clears one request, twice per run. <b>Because I Said So</b> (3): ends every screen-time argument.</li>
             <li>1:00 PM: nap time. Keep the <b>Shhh</b> meter low: barks, fights and smoke alarms wake her.</li>
-            <li>Desktop: click-and-hold or WASD to walk, keys 1–3 abilities, Space = tap/hold/mash, arrows = swipe (while a swipe is up), Z/X = choices, U = “uh-huh”, P = pause.</li>
+            <li>Desktop: WASD to walk, keys 1–3 abilities, Space = tap/hold/mash/pick, arrows = swipe (while a swipe is up), Z/X = choices, U = “uh-huh”, P = pause.</li>
           </ul>
           <button class="big close">Got it</button>
         </div>
@@ -91,7 +97,7 @@
 
       <section id="end" class="overlay">
         <div class="card scroll">
-          <p class="kicker">Kayla’s home.</p>
+          <p id="endKicker" class="kicker">Kayla’s home.</p>
           <p id="endQuote" class="quote"></p>
           <p class="muted">Nick made it to</p>
           <p id="endTime" class="time">1:47 PM</p>
@@ -103,8 +109,20 @@
           </form>
           <p id="submitMsg" class="muted"></p>
           <ol id="endBoard" class="board"></ol>
-          <button id="againBtn" class="big">Try again</button>
+          <button id="againBtn" class="big">Retry week</button>
           <button id="titleBtn" class="small ghost">Title</button>
+        </div>
+      </section>
+
+      <section id="won" class="overlay">
+        <div class="card scroll">
+          <p id="wonKicker" class="kicker">Week 1 · 5:00 PM</p>
+          <h2 id="wonTitle" class="won">Nick made it to game night!</h2>
+          <p class="tag">Kayla’s home. Keys, wallet, snacks. Out the door to Carlson’s.</p>
+          <p id="wonQuote" class="quote"></p>
+          <ul id="wonStats" class="stats"></ul>
+          <button id="nextBtn" class="big">Next week</button>
+          <button id="wonTitleBtn" class="small ghost">Title</button>
         </div>
       </section>
 

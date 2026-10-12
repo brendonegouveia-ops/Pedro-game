@@ -33,6 +33,8 @@ export const WALL_T = 6;
 
 // Solid walls. Gaps between them are the doorways listed in DOORS.
 export const WALLS: Rect[] = [
+  // Back fence strip: keeps everyone's sprite clear of the HUD above the yard.
+  { x: 0, y: 0, w: 390, h: 40 },
   // House back wall (backyard side): back door at x 48-120, slider at x 290-366.
   { x: 0, y: 160, w: 48, h: WALL_T },
   { x: 120, y: 160, w: 170, h: WALL_T },

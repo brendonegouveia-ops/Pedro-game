@@ -26,8 +26,8 @@ function goalFor(sim: Sim, r: Request): { x: number; y: number } {
   return { x: a.x, y: a.y - 6 };
 }
 
-export function runBot(seed: number, opts: BotOpts, maxT = 900): Sim {
-  const sim = new Sim(seed);
+export function runBot(seed: number, opts: BotOpts, maxT = 900, week = 1): Sim {
+  const sim = new Sim(seed, week);
   const dt = 1 / 30;
   const react = 0.25 + (1 - opts.skill) * 0.6;
   let wait = 0;
