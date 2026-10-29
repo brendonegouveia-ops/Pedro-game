@@ -1,0 +1,327 @@
+:root {
+  --bg: #1d1f2b;
+  --ink: #22223b;
+  --paper: #fffaf0;
+  --accent: #ff7a59;
+  --muted: #8d8fa8;
+  --font: 'Trebuchet MS', ui-rounded, 'SF Pro Rounded', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  position: fixed;
+  inset: 0;
+  font-family: var(--font);
+  color: var(--ink);
+}
+
+/* Dynamic viewport height: 100dvh where supported, refined from visualViewport in main.ts. */
+#app {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  height: var(--app-h, 100dvh);
+  box-sizing: border-box;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#game,
+#app {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+#game {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+#game canvas {
+  display: block;
+  touch-action: none;
+  position: relative;
+  z-index: 1;
+}
+/* The 3D house sits underneath Phaser's transparent canvas; input goes to Phaser. */
+#game canvas#three {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  background: rgba(20, 21, 32, 0.78);
+  z-index: 10;
+}
+.overlay[data-open] {
+  display: flex;
+}
+#start {
+  background: radial-gradient(circle at 50% 30%, #3d405b 0%, #1d1f2b 70%);
+}
+
+.card {
+  background: var(--paper);
+  border-radius: 24px;
+  padding: 22px 20px;
+  width: 100%;
+  max-width: 360px;
+  max-height: 100%;
+  box-sizing: border-box;
+  text-align: center;
+  box-shadow: 0 10px 40px #0008;
+}
+.card.scroll {
+  overflow-y: auto;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+h1 {
+  font-size: 46px;
+  line-height: 0.95;
+  margin: 4px 0 10px;
+  letter-spacing: 1px;
+  color: #e76f51;
+  text-shadow: 3px 3px 0 #22223b22;
+}
+h2 {
+  margin: 4px 0 10px;
+  font-size: 24px;
+}
+.kicker {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #2a9d8f;
+}
+.tag {
+  margin: 0 0 6px;
+  font-size: 16px;
+  line-height: 1.35;
+}
+.catch {
+  font-style: italic;
+  font-weight: 700;
+  margin: 0 0 14px;
+  font-size: 18px;
+}
+.nick {
+  width: 92px;
+  height: 134px;
+  display: block;
+  margin: 2px auto 0;
+}
+.muted {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 6px 0;
+}
+.row {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+button {
+  font-family: var(--font);
+  cursor: pointer;
+  border: 0;
+  touch-action: manipulation;
+}
+button.big {
+  display: block;
+  width: 100%;
+  min-height: 56px;
+  border-radius: 16px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 22px;
+  font-weight: 800;
+  box-shadow: 0 4px 0 #c4543a;
+  margin-top: 8px;
+}
+button.big:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 #c4543a;
+}
+button.small {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 14px;
+  border-radius: 12px;
+  background: #e8dfd0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+button.ghost {
+  background: transparent;
+  margin-top: 8px;
+}
+.help {
+  text-align: left;
+  padding-left: 18px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.help li {
+  margin-bottom: 8px;
+}
+.board {
+  text-align: left;
+  padding: 0;
+  margin: 8px 0;
+  list-style: none;
+  counter-reset: r;
+  font-size: 15px;
+}
+.board li {
+  counter-increment: r;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 10px;
+}
+.board li:nth-child(odd) {
+  background: #f1e9da;
+}
+.board li::before {
+  content: counter(r) '.';
+  width: 28px;
+  color: var(--muted);
+  font-weight: 700;
+}
+.board li .n {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board li .t {
+  font-weight: 800;
+}
+.board li.me {
+  background: #ffd166;
+}
+.board .empty::before {
+  content: '';
+}
+.quote {
+  font-size: 19px;
+  font-weight: 700;
+  margin: 8px 0 12px;
+}
+.time {
+  font-size: 48px;
+  font-weight: 900;
+  margin: 0;
+  color: #e76f51;
+}
+.stats {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  font-size: 13px;
+}
+.stats li {
+  background: #f1e9da;
+  border-radius: 10px;
+  padding: 6px;
+}
+.stats b {
+  display: block;
+  font-size: 18px;
+}
+.submit {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.submit input {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  border-radius: 12px;
+  border: 2px solid #e8dfd0;
+  padding: 0 12px;
+  font-family: var(--font);
+  /* 16px+ keeps iOS from zooming on focus */
+  font-size: 16px;
+  user-select: text;
+  -webkit-user-select: text;
+  touch-action: manipulation;
+}
+.rot {
+  font-size: 54px;
+  margin: 0;
+}
+#rotate {
+  z-index: 50;
+  background: #1d1f2b;
+}
+/* Phones turned sideways. Desktop (fine pointer) is never asked to rotate. */
+@media (orientation: landscape) and (pointer: coarse) and (max-height: 600px) {
+  #rotate {
+    display: flex;
+  }
+}
+
+.weekpick {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 6px;
+}
+.weekpick .wk {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+}
+.weekpick .wk b {
+  font-size: 20px;
+}
+.weekpick .wk span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.weekpick button:disabled {
+  opacity: 0.35;
+}
+h2.won {
+  color: #2a9d8f;
+  font-size: 26px;
+  text-wrap: balance;
+}

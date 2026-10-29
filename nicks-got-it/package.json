@@ -1,0 +1,35 @@
+{
+  "name": "nicks-got-it",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "NICK'S GOT IT: a one-thumb dad-survival game. Phaser 3 + Vite, Cloudflare Pages (+ Pages Functions/D1 leaderboard).",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p functions/tsconfig.json",
+    "test": "vitest run",
+    "balance": "vitest run tests/balance.test.ts --reporter=verbose",
+    "smoke": "node tools/smoke.mjs",
+    "build:artifact": "node tools/build-artifact.mjs",
+    "build:pages": "node tools/build-artifact.mjs ../nick/index.html --standalone",
+    "pages:dev": "npm run build && wrangler pages dev dist --d1 DB=nicks-got-it",
+    "db:migrate:local": "wrangler d1 execute nicks-got-it --local --file=schema.sql",
+    "db:migrate:remote": "wrangler d1 execute nicks-got-it --remote --file=schema.sql",
+    "deploy": "npm run build && wrangler pages deploy dist"
+  },
+  "dependencies": {
+    "@types/three": "0.158.3",
+    "phaser": "3.90.0",
+    "three": "0.158.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20251008.0",
+    "playwright": "1.56.1",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vitest": "3.2.4",
+    "wrangler": "4.42.0"
+  }
+}
