@@ -58,7 +58,7 @@ export const MOVE = {
   lowCoffeeSpeed: 0.6, // "40% slower" below the coffee threshold
   radius: 10, // collision radius
   reach: 46, // how close Nick must stand to a kid or spill to help
-  stationReach: 34, // stations
+  stationReach: 40, // stations (on or beside furniture)
   stickyReach: 12, // the current job stays up until Nick is this much further away
   cornerAssist: 18, // px: clipping a doorframe slides Nick around it
   kidSpeed: 55,

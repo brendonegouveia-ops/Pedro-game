@@ -7,11 +7,11 @@ const step = (sim: Sim, sec: number, dt = 1 / 60) => {
   for (let t = 0; t < sec; t += dt) sim.update(dt);
 };
 
-// Hold a finger on (x, y) until Nick arrives, then let go (one frame to settle).
+// Walk Nick toward (x, y) until he arrives or can't get closer (furniture), then stop.
 function walkTo(sim: Sim, x: number, y: number, max = 10) {
   sim.setMoveTarget({ x, y });
   let t = 0;
-  while (t < max && dist(sim.nick.x, sim.nick.y, x, y) > 6) {
+  while (t < max && dist(sim.nick.x, sim.nick.y, x, y) > 6 && (t < 0.2 || sim.nick.moving)) {
     sim.update(1 / 60);
     t += 1 / 60;
   }
@@ -79,6 +79,7 @@ describe('house', () => {
         sim.nick.y = R.y + R.h / 2;
         const t = walkToStation(sim, s);
         expect(t, `${r} -> ${s}`).toBeLessThan(6);
+        expect(dist(sim.nick.x, sim.nick.y, STATIONS[s].x, STATIONS[s].y), `${r} -> ${s} in reach`).toBeLessThanOrEqual(MOVE.stationReach);
       }
   });
 

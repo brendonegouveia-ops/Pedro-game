@@ -1,9 +1,10 @@
 import Phaser from 'phaser';
 import { ABILITIES, COFFEE, KAYLA_OUT_OF_CHARGES } from '../config';
-import { COUCH_POS, ROOM_NAMES, STATIONS, STATION_IDS, type RoomId, type StationId } from '../sim/house';
+import { COUCH_POS, DOORS, ROOM_RECTS, STATIONS, STATION_IDS, WORLD as W_SIM, type RoomId, type StationId } from '../sim/house';
 import { REQUEST_LABEL, Sim, clockString, type ActorId, type Request, type SimEvent } from '../sim/sim';
-import { CHAR_HEIGHT, drawActor, drawGrill, drawIcon, drawMomFace, drawSpot, drawWorld } from './art';
-import { ACTOR_SCALE, BAR, COLORS, DPAD, FONT, H, HUD, PANEL, W, WORLD, inWorld, toScreen } from './layout';
+import type { World3D } from '../three/World3D';
+import { drawIcon, drawMomFace } from './art';
+import { BAR, COLORS, DPAD, FONT, H, HUD, PANEL, W, WORLD, inWorld } from './layout';
 import { ActionPanel } from './panel';
 
 export interface SceneHooks {
@@ -16,12 +17,6 @@ export interface SceneHooks {
 
 type Pt = { x: number; y: number };
 
-interface ActorView {
-  c: Phaser.GameObjects.Container;
-  body: Phaser.GameObjects.Graphics;
-  fx: Phaser.GameObjects.Graphics;
-  speech: Phaser.GameObjects.Text;
-}
 
 interface BubbleView {
   c: Phaser.GameObjects.Container;
@@ -58,11 +53,10 @@ export class GameScene extends Phaser.Scene {
   private dyn!: Phaser.GameObjects.Graphics; // highlights, rings, finger marker
   private top!: Phaser.GameObjects.Graphics; // HUD + bar
   private fxTop!: Phaser.GameObjects.Graphics; // freeze tint, alarm flash
-  private actors = new Map<ActorId | 'nick', ActorView>();
-  private nickHand!: Phaser.GameObjects.Graphics;
-  private nickHandKey = '';
+  world?: World3D; // the 3D house + camera (set by main.ts)
+  private speech = new Map<ActorId, Phaser.GameObjects.Text>();
+  private chips = new Map<StationId, Phaser.GameObjects.Container>();
   private bubbles = new Map<number, BubbleView>();
-  private spotTexts = new Map<StationId, Phaser.GameObjects.Text>();
   private panel!: ActionPanel;
   private clockText!: Phaser.GameObjects.Text;
   private chaosText!: Phaser.GameObjects.Text;
@@ -115,19 +109,18 @@ export class GameScene extends Phaser.Scene {
     const cam = this.cameras.main;
     cam.setOrigin(0, 0);
     cam.setZoom(this.R);
-    cam.setBackgroundColor(COLORS.bg);
+    // Transparent: the 3D view (a canvas underneath) shows through the world rectangle.
 
-    // Static floor plan + station art, baked once at device resolution.
-    const map = this.add.graphics();
-    drawWorld(map, WORLD.x, WORLD.y);
-    this.drawStations(map);
-    this.bake(map, 0);
-    this.labelRooms();
-
-    this.dyn = this.add.graphics().setDepth(8);
-    for (const id of ['evelyn', 'nora', 'tyler', 'eloise', 'nick'] as const) this.makeActor(id);
-    this.nickHand = this.add.graphics();
-    this.actors.get('nick')!.c.add(this.nickHand);
+    this.dyn = this.add.graphics().setDepth(28);
+    this.buildChips();
+    for (const id of ['evelyn', 'nora', 'tyler', 'eloise'] as const)
+      this.speech.set(
+        id,
+        this.txt(0, 0, '', 11, '#22223b', { backgroundColor: '#ffffff', padding: { x: 5, y: 2 }, fontStyle: 'bold' })
+          .setOrigin(0.5, 1)
+          .setDepth(36)
+          .setVisible(false),
+      );
 
     this.shhText = this.txt(0, 0, 'Shhh', 10, '#ffffff', { fontStyle: 'bold' }).setOrigin(0.5).setDepth(31).setVisible(false);
     this.zzz = this.txt(0, 0, 'z Z z', 12, '#3d405b', { fontStyle: 'bold' }).setOrigin(0.5).setDepth(31).setVisible(false);
@@ -170,14 +163,6 @@ export class GameScene extends Phaser.Scene {
     this.game.events.emit('scene-ready');
   }
 
-  private bake(g: Phaser.GameObjects.Graphics, depth: number) {
-    const rt = this.add.renderTexture(0, 0, W * this.R, H * this.R).setOrigin(0, 0).setScale(1 / this.R).setDepth(depth);
-    g.setScale(this.R);
-    rt.draw(g, 0, 0);
-    g.destroy();
-    return rt;
-  }
-
   // ------------------------------------------------------------ run control
   startRun(seed: number, week = 1) {
     this.sim = new Sim(seed, week);
@@ -196,6 +181,7 @@ export class GameScene extends Phaser.Scene {
     this.jokeCard.setVisible(false);
     for (const b of this.bubbles.values()) b.c.destroy();
     this.bubbles.clear();
+    this.world?.sync(this.sim, 0, 0);
   }
 
   // Called when the game pauses: let go of everything held.
@@ -220,6 +206,10 @@ export class GameScene extends Phaser.Scene {
     if (this.running) {
       this.sim.update(sdt);
       this.handleEvents(this.sim.drainEvents());
+    }
+    if (this.world) {
+      this.world.sync(this.sim, this.running ? sdt : 0, this.now, dt);
+      this.world.render();
     }
     this.render(dt);
     this.panel.update(this.running ? sdt : 0);
@@ -412,58 +402,20 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ------------------------------------------------------------ build
-  private drawStations(g: Phaser.GameObjects.Graphics) {
+  // Floating icon chips over stations, room name tags, and "?" marks for shoe spots,
+  // all placed each frame by projecting from the 3D camera.
+  private buildChips() {
     for (const s of STATION_IDS) {
-      const p = toScreen(STATIONS[s].x, STATIONS[s].y);
-      const icon = PLATE_ICON[s];
-      if (icon) {
-        g.fillStyle(0xffffff, 0.92).fillRoundedRect(p.x - 13, p.y - 13, 26, 26, 6);
-        g.lineStyle(1.5, 0x000000, 0.18).strokeRoundedRect(p.x - 13, p.y - 13, 26, 26, 6);
-        g.save();
-        g.translateCanvas(p.x, p.y);
-        drawIcon(g, icon, 19);
-        g.restore();
-      } else if (s.startsWith('spot_')) drawSpot(g, s, p.x, p.y);
-      else if (s === 'grill') drawGrill(g, p.x, p.y);
+      const icon = PLATE_ICON[s] ?? (s === 'grill' ? 'burger' : s === 'door' ? 'paw' : s.startsWith('spot_') ? 'shoe' : s === 'highchair' || s === 'playpen' ? 'nora' : '');
+      if (!icon) continue;
+      const g = this.add.graphics();
+      g.fillStyle(0x000000, 0.18).fillCircle(1, 2, 12);
+      g.fillStyle(0xffffff, 0.95).fillCircle(0, 0, 12);
+      const ic = this.add.graphics();
+      drawIcon(ic, icon, 15);
+      const q = this.txt(0, -1, '?', 13, '#22223b', { fontStyle: 'bold' }).setOrigin(0.5).setVisible(false).setName('q');
+      this.chips.set(s, this.add.container(0, 0, [g, ic, q]).setDepth(20));
     }
-    for (const s of ['spot_toolbox', 'spot_bin', 'spot_cooler', 'spot_bike'] as StationId[]) {
-      const p = toScreen(STATIONS[s].x, STATIONS[s].y);
-      this.spotTexts.set(s, this.txt(p.x, p.y, '?', 16, '#22223b', { fontStyle: 'bold' }).setOrigin(0.5).setDepth(9).setVisible(false));
-    }
-  }
-
-  private labelRooms() {
-    const spots: Record<RoomId, Pt> = { backyard: { x: 104, y: 10 }, kitchen: { x: 184, y: 172 }, living: { x: 382, y: 484 }, garage: { x: 184, y: 362 } };
-    for (const r of Object.keys(spots) as RoomId[]) {
-      const p = toScreen(spots[r].x, spots[r].y);
-      this.txt(p.x, p.y, ROOM_NAMES[r].toUpperCase(), 9, '#ffffff', {
-        fontStyle: 'bold',
-        backgroundColor: '#00000055',
-        padding: { x: 4, y: 2 },
-      })
-        .setOrigin(r === 'backyard' ? 0 : 1, 0)
-        .setDepth(1);
-    }
-    for (const s of ['highchair', 'playpen', 'door'] as StationId[]) {
-      const p = toScreen(STATIONS[s].x, STATIONS[s].y);
-      const off = s === 'door' ? -42 : s === 'highchair' ? -40 : 20;
-      this.txt(p.x, p.y + off, STATIONS[s].label, 8, '#22223b', { backgroundColor: '#ffffffaa', padding: { x: 2, y: 1 } })
-        .setOrigin(0.5, 0)
-        .setDepth(2);
-    }
-  }
-
-  private makeActor(id: ActorId | 'nick') {
-    const body = this.add.graphics();
-    drawActor(body, id);
-    body.setScale(ACTOR_SCALE[id]);
-    const fx = this.add.graphics();
-    const c = this.add.container(0, 0, [body, fx]).setDepth(10);
-    const speech = this.txt(0, 0, '', 11, '#22223b', { backgroundColor: '#ffffff', padding: { x: 5, y: 2 }, fontStyle: 'bold' })
-      .setOrigin(0.5, 1)
-      .setDepth(36)
-      .setVisible(false);
-    this.actors.set(id, { c, body, fx, speech });
   }
 
   private buildHud() {
@@ -569,29 +521,32 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ------------------------------------------------------------ positions
-  // Where a request's bubble floats (screen space).
+  // Screen point (design px) over a world point at height h.
+  private proj(x: number, y: number, h: number): Pt & { behind?: boolean } {
+    if (this.world) return this.world.project(x, y, h);
+    return { x: WORLD.x + x, y: WORLD.y + y - h * 0.5 };
+  }
+
+  private headOf(id: ActorId): Pt {
+    const a = this.sim.actors[id];
+    const h = this.world?.heightOf(id) ?? 40;
+    if (a.state === 'carried') return this.proj(this.sim.nick.x, this.sim.nick.y, 80);
+    if (a.state === 'asleep') return this.proj(COUCH_POS.x, COUCH_POS.y, 36);
+    return this.proj(a.x, a.y, h);
+  }
+
+  // Where a request's bubble floats (screen space, may be off the 3D view).
   private bubblePoint(r: Request): Pt {
-    if (r.kind === 'flip' || r.kind === 'thermostat' || r.kind === 'needs_out') {
-      const st = STATIONS[r.kind === 'flip' ? 'grill' : r.kind === 'thermostat' ? 'thermostat' : 'door'];
-      const p = toScreen(st.x, st.y);
-      if (r.kind === 'thermostat') return { x: p.x + 30, y: p.y + 6 };
-      if (r.kind === 'needs_out') {
-        const d = this.sim.actors.eloise;
-        const dp = toScreen(d.x, d.y);
-        return { x: dp.x + 8, y: dp.y - 48 };
-      }
-      return { x: p.x - 34, y: p.y - 4 };
+    if (r.kind === 'flip') return this.proj(STATIONS.grill.x, STATIONS.grill.y, 78);
+    if (r.kind === 'thermostat') return this.proj(STATIONS.thermostat.x, STATIONS.thermostat.y, 92);
+    if (r.kind === 'needs_out') {
+      const p = this.headOf('eloise');
+      return { x: p.x, y: p.y - 26 };
     }
-    if (r.kind === 'spill') {
-      const p = toScreen(r.x ?? 0, r.y ?? 0);
-      return { x: p.x, y: p.y - 30 };
-    }
+    if (r.kind === 'spill') return this.proj(r.x ?? 0, r.y ?? 0, 34);
     const kids = (r.kids ?? [r.owner]) as ActorId[];
-    const ps = kids.map((k) => toScreen(this.sim.actors[k].x, this.sim.actors[k].y));
-    const x = ps.reduce((s, p) => s + p.x, 0) / ps.length;
-    const h = Math.max(...kids.map((k) => CHAR_HEIGHT[k] * ACTOR_SCALE[k]));
-    const y = Math.min(...ps.map((p) => p.y)) - h - 22;
-    return { x: Phaser.Math.Clamp(x, 24, W - 24), y: Math.max(WORLD.y + 22, y) };
+    const ps = kids.map((k) => this.headOf(k));
+    return { x: ps.reduce((s, p) => s + p.x, 0) / ps.length, y: Math.min(...ps.map((p) => p.y)) - 26 };
   }
 
   // ------------------------------------------------------------ render
@@ -599,56 +554,28 @@ export class GameScene extends Phaser.Scene {
     const sim = this.sim;
     const g = this.dyn;
     g.clear();
+    // The canvas is transparent; paint the non-3D bands (the deck between the house and the bar).
+    g.fillStyle(COLORS.bg, 1).fillRect(0, WORLD.y + WORLD.h, W, BAR.y - WORLD.y - WORLD.h);
+    g.fillRect(0, HUD.h, W, WORLD.y - HUD.h);
 
     this.renderDpad();
     if (sim.goalMin !== 480) this.weekText.setText(`WEEK ${sim.week} · GAME NIGHT ${clockString(sim.goalMin).replace(' PM', '')}`);
 
-    this.renderHighlights(g);
-
+    this.renderChips(g);
     for (const id of ['evelyn', 'nora', 'tyler', 'eloise'] as ActorId[]) {
       const a = sim.actors[id];
-      const v = this.actors.get(id)!;
-      v.c.setVisible(a.present);
-      v.speech.setVisible(false);
-      if (!a.present) continue;
-      let p = toScreen(a.x, a.y);
-      if (a.state === 'carried') {
-        const n = toScreen(sim.nick.x, sim.nick.y);
-        p = { x: n.x - 13 * sim.nick.facing, y: n.y - 14 };
-      }
-      const asleep = a.state === 'asleep';
-      v.c.setPosition(p.x + (asleep ? -4 : 0), p.y + (asleep ? -8 : 0));
-      v.c.setDepth(10 + p.y / 1000 + (a.state === 'carried' ? 0.001 : 0));
-      v.c.setAngle(asleep ? -84 : 0);
-      const walking = !!a.dest && a.state !== 'carried';
-      v.body.y = a.state === 'crying' ? Math.sin(this.now * 18) * 1.2 : walking ? -Math.abs(Math.sin(this.now * 12)) * 2 : 0;
-      if (id === 'eloise' && a.dest) v.body.scaleX = (a.dest.x < a.x ? -1 : 1) * ACTOR_SCALE.eloise;
-      this.drawActorFx(v, id);
+      const t = this.speech.get(id)!;
+      t.setVisible(false);
+      if (!a.present || a.state === 'asleep') continue;
       const text = a.state === 'crying' ? (id === 'nora' ? 'WAAAH' : 'WAAAAH!') : a.speech;
-      if (text && !asleep) {
-        v.speech.setText(text).setVisible(true);
-        v.speech.setPosition(p.x, p.y - CHAR_HEIGHT[id] * ACTOR_SCALE[id] - (a.req != null ? 46 : 4));
-      }
+      if (!text) continue;
+      const p = this.headOf(id);
+      if (!this.onView(p)) continue;
+      t.setText(text).setVisible(true).setPosition(p.x, p.y - (a.req != null ? 52 : 6));
     }
-
-    const nv = this.actors.get('nick')!;
-    const n = toScreen(sim.nick.x, sim.nick.y);
-    nv.c.setPosition(n.x, n.y + (sim.nick.moving ? -Math.abs(Math.sin(this.now * 14)) * 2.5 : 0));
-    nv.c.setDepth(10 + n.y / 1000 + 0.0005);
-    nv.body.scaleX = sim.nick.facing * ACTOR_SCALE.nick;
-    const handKey = `${sim.nick.hand}|${sim.nick.facing}`;
-    if (handKey !== this.nickHandKey) {
-      this.nickHandKey = handKey;
-      this.nickHand.clear();
-      const h = sim.nick.hand;
-      if (h && h !== 'nora') {
-        this.nickHand.setPosition(-15 * sim.nick.facing, h === 'phone' ? -44 : -24);
-        drawIcon(this.nickHand, h === 'phone' ? 'phone' : h, 12);
-      }
-    }
-    if (sim.engaged) g.lineStyle(3, COLORS.accent, 0.9).strokeEllipse(n.x, n.y, 34 + Math.sin(this.now * 10) * 3, 10);
 
     this.renderBubbles(g, dt);
+    this.renderMinimap(g);
     this.renderNap();
     this.renderHud();
     this.renderOverlays(dt);
@@ -681,101 +608,78 @@ export class GameScene extends Phaser.Scene {
     g.fillStyle(0x3d405b, 1).fillCircle(cx, cy, 14);
   }
 
-  private drawActorFx(v: ActorView, id: ActorId) {
-    const a = this.sim.actors[id];
-    const fx = v.fx;
-    fx.clear();
-    if (a.state === 'crying') {
-      const h = CHAR_HEIGHT[id] * ACTOR_SCALE[id];
-      const t = (this.now * 2) % 1;
-      fx.fillStyle(0x4ea8de, 1 - t);
-      fx.fillCircle(-4, -h + 16 + t * 9, 1.8);
-      fx.fillCircle(4, -h + 16 + ((t + 0.5) % 1) * 9, 1.8);
+  private onView(p: Pt & { behind?: boolean }, pad = 0) {
+    return !p.behind && p.x >= WORLD.x + pad && p.x <= WORLD.x + WORLD.w - pad && p.y >= WORLD.y + pad && p.y <= WORLD.y + WORLD.h - pad;
+  }
+
+  private renderChips(g: Phaser.GameObjects.Graphics) {
+    const sim = this.sim;
+    const shoe = new Map<StationId, boolean>();
+    for (const r of sim.requests) if (r.kind === 'lost_shoe') for (const s of r.spots ?? []) shoe.set(s, !!r.checked?.includes(s));
+    for (const [s, c] of this.chips) {
+      const st = STATIONS[s];
+      const h = s === 'grill' ? 58 : s === 'thermostat' ? 70 : s === 'door' ? 90 : s.startsWith('spot_') ? 34 : 58;
+      const p = this.proj(st.x, st.y, h);
+      const spot = s.startsWith('spot_');
+      // Shoe spots only show while a lost shoe sends you there.
+      const show = this.onView(p, 6) && (!spot || shoe.has(s));
+      c.setVisible(show).setPosition(p.x, p.y);
+      const q = c.getByName('q') as Phaser.GameObjects.Text;
+      if (spot && show) {
+        q.setText(shoe.get(s) ? '✓' : '?').setVisible(true);
+        (c.list[1] as Phaser.GameObjects.Graphics).setVisible(false);
+      }
+    }
+    // Grill smoke.
+    if (sim.grill.on) {
+      const p = this.proj(STATIONS.grill.x, STATIONS.grill.y, 46);
+      const flip = sim.requests.find((r) => r.kind === 'flip');
+      const burn = flip ? 1 - flip.left / flip.patience : 0;
+      const puff = (this.now * 0.8) % 1;
+      if (this.onView(p)) {
+        g.fillStyle(flip ? 0x555555 : 0xdddddd, (1 - puff) * (0.35 + burn * 0.5));
+        g.fillCircle(p.x + puff * 8, p.y - puff * 30, 4 + puff * 9);
+      }
     }
   }
 
-  private renderHighlights(g: Phaser.GameObjects.Graphics) {
+  // A small floor plan in the corner: rooms, Nick, the kids, and where requests are.
+  private renderMinimap(g: Phaser.GameObjects.Graphics) {
     const sim = this.sim;
-    const pulse = 0.5 + Math.sin(this.now * 6) * 0.5;
-    const ring = (s: StationId, color: number, alpha = 0.9) => {
-      const p = toScreen(STATIONS[s].x, STATIONS[s].y);
-      g.lineStyle(2.5, color, alpha).strokeCircle(p.x, p.y, 17 + pulse * 2);
-    };
-    if (sim.nick.coffee < COFFEE.slowBelow) ring('coffee', COLORS.bad);
-    if (sim.nick.hand === 'nora') {
-      ring('highchair', 0xffd166);
-      ring('playpen', 0xffd166);
+    const sc = 0.2;
+    const ox = WORLD.x + WORLD.w - W_SIM.w * sc - 8;
+    const oy = WORLD.y + 8;
+    const M = (x: number, y: number) => ({ x: ox + x * sc, y: oy + y * sc });
+    g.fillStyle(0x1d1f2b, 0.75).fillRoundedRect(ox - 3, oy - 3, W_SIM.w * sc + 6, W_SIM.h * sc + 6, 6);
+    const col: Record<RoomId, number> = { backyard: 0x76bd79, kitchen: 0xe8e6dc, living: 0xc68b59, garage: 0xa3abb5 };
+    for (const r of Object.keys(ROOM_RECTS) as RoomId[]) {
+      const R = ROOM_RECTS[r];
+      const a = M(R.x, R.y);
+      g.fillStyle(col[r], 0.95).fillRect(a.x, a.y, R.w * sc, R.h * sc);
     }
-    // Where to get what someone is asking for (gold), unless Nick already has it.
-    const need = new Set(sim.requests.map((r) => r.kind));
-    const NEED = 0xffd166;
-    if (need.has('snack') && sim.nick.hand !== 'snack') ring('snacks', NEED);
-    if (need.has('juice_box') && sim.nick.hand !== 'juice_box') ring('juice', NEED);
-    if (need.has('sippy_cup') && sim.nick.hand !== 'sippy_cup') ring('sippy', NEED);
-    if (need.has('booboo') && sim.nick.hand !== 'bandaid') ring('bandaids', NEED);
-    // Who Nick is bringing his item to.
-    const promised = sim.req(sim.promisedId);
-    if (promised) {
-      const a = sim.anchorOf(promised);
-      const p = toScreen(a.x, a.y);
-      g.lineStyle(3, 0x4ea8de, 1).strokeEllipse(p.x, p.y + 2, 36 + pulse * 6, 14 + pulse * 2);
+    g.fillStyle(0xf3e3c3, 1);
+    for (const d of DOORS) {
+      const a = M(d.x, d.y);
+      if (d.axis === 'h') g.fillRect(a.x - (d.span * sc) / 2, a.y - 1.5, d.span * sc, 3);
+      else g.fillRect(a.x - 1.5, a.y - (d.span * sc) / 2, 3, d.span * sc);
     }
-    // Crying kids will take whatever Nick is holding.
-    const h = sim.nick.hand;
-    if (h && h !== 'nora' && h !== 'phone') {
-      for (const k of ['evelyn', 'nora', 'tyler'] as const) {
-        const a = sim.actors[k];
-        if (!a.present || a.state !== 'crying') continue;
-        const p = toScreen(a.x, a.y);
-        g.lineStyle(2, 0x4ea8de, 0.7).strokeEllipse(p.x, p.y + 2, 30 + pulse * 4, 12);
-      }
-    }
-    if (need.has('thermostat')) ring('thermostat', COLORS.bad);
-    if (need.has('needs_out')) ring('door', 0xffd166);
-
-    for (const t of this.spotTexts.values()) t.setVisible(false);
+    const pulse = Math.sin(this.now * 10) > 0;
     for (const r of sim.requests) {
-      if (r.kind !== 'lost_shoe') continue;
-      for (const s of r.spots ?? []) {
-        const checked = r.checked?.includes(s);
-        const p = toScreen(STATIONS[s].x, STATIONS[s].y);
-        g.fillStyle(checked ? 0x2a9d8f : 0xffd166, 0.3).fillCircle(p.x, p.y, 17);
-        g.lineStyle(2.5, checked ? 0x2a9d8f : 0xffd166, 1).strokeCircle(p.x, p.y, 18 + (checked ? 0 : pulse * 2));
-        this.spotTexts.get(s)!.setText(checked ? '✓' : '?').setVisible(true);
-      }
+      const a = sim.anchorOf(r);
+      const p = M(a.x, a.y);
+      const frac = isFinite(r.left) ? r.left / r.patience : 0;
+      const c = frac > 0.5 ? COLORS.chaosLo : frac > 0.25 ? COLORS.chaosMid : COLORS.chaosHi;
+      if (frac > 0.25 || pulse) g.fillStyle(c, 1).fillCircle(p.x, p.y, 3.5);
     }
-
-    if (sim.grill.on) {
-      const p = toScreen(STATIONS.grill.x, STATIONS.grill.y);
-      const flip = sim.requests.find((r) => r.kind === 'flip');
-      const burn = flip ? 1 - flip.left / flip.patience : 0;
-      g.fillStyle(Phaser.Display.Color.GetColor(150 - burn * 110, 80 - burn * 60, 35), 1);
-      g.fillCircle(p.x - 7, p.y - 4, 6).fillCircle(p.x + 7, p.y + 4, 6);
-      const puff = (this.now * 0.8) % 1;
-      g.fillStyle(flip ? 0x555555 : 0xdddddd, (1 - puff) * (0.35 + burn * 0.5));
-      g.fillCircle(p.x + puff * 8, p.y - 14 - puff * 26, 4 + puff * 8);
+    for (const id of ['evelyn', 'nora', 'tyler', 'eloise'] as ActorId[]) {
+      const a = sim.actors[id];
+      if (!a.present || a.state === 'carried') continue;
+      const p = M(a.x, a.y);
+      g.fillStyle(id === 'eloise' ? 0x9c8f7a : 0xffffff, 1).fillCircle(p.x, p.y, 1.8);
     }
-    for (const r of sim.requests) {
-      if (r.kind !== 'spill') continue;
-      const p = toScreen(r.x ?? 0, r.y ?? 0);
-      g.fillStyle(0x4ea8de, 0.75).fillEllipse(p.x, p.y, 34, 14).fillCircle(p.x - 12, p.y - 3, 5).fillCircle(p.x + 10, p.y + 3, 4);
-    }
-
-    // The job Nick is next to: a ring under it so you know what the panel is about.
-    const it = sim.interaction;
-    if (it) {
-      let p: Pt | null = null;
-      if (it.target.t === 'station') p = toScreen(STATIONS[it.target.station].x, STATIONS[it.target.station].y);
-      else if (it.target.t === 'kid') p = toScreen(sim.actors[it.target.kid].x, sim.actors[it.target.kid].y);
-      else {
-        const r = sim.req(it.target.req);
-        if (r) {
-          const a = sim.anchorOf(r);
-          p = toScreen(a.x, a.y);
-        }
-      }
-      if (p) g.lineStyle(3, COLORS.accent, 1).strokeEllipse(p.x, p.y + 2, 40 + pulse * 4, 16 + pulse * 2);
-    }
+    const n = M(sim.nick.x, sim.nick.y);
+    g.fillStyle(COLORS.accent, 1).fillCircle(n.x, n.y, 3);
+    g.lineStyle(1, 0xffffff, 1).strokeCircle(n.x, n.y, 3);
   }
 
   private renderBubbles(g: Phaser.GameObjects.Graphics, dt: number) {
@@ -802,8 +706,28 @@ export class GameScene extends Phaser.Scene {
         this.tweens.add({ targets: b.c, scale: 1, duration: 220, ease: 'Back.easeOut' });
         this.bubbles.set(r.id, b);
       }
-      b.pos = approach(b.pos, target, 500, dt);
+      // Off the 3D view: pin to the edge, with an arrow toward it.
+      const pad = 24;
+      const off = !this.onView(target as Pt & { behind?: boolean }, pad);
+      const edge = {
+        x: Phaser.Math.Clamp(target.x, WORLD.x + pad, WORLD.x + WORLD.w - pad),
+        y: Phaser.Math.Clamp(target.y, WORLD.y + pad, WORLD.y + WORLD.h - pad - 22), // room for the label above the deck
+      };
+      b.pos = approach(b.pos, edge, 900, dt);
       b.c.setPosition(b.pos.x, b.pos.y);
+      if (off) {
+        const ang = Math.atan2(target.y - edge.y, target.x - edge.x);
+        const ax = b.pos.x + Math.cos(ang) * 27;
+        const ay = b.pos.y + Math.sin(ang) * 27;
+        g.fillStyle(0xffffff, 1).fillTriangle(
+          ax + Math.cos(ang) * 7,
+          ay + Math.sin(ang) * 7,
+          ax + Math.cos(ang + 2.3) * 7,
+          ay + Math.sin(ang + 2.3) * 7,
+          ax + Math.cos(ang - 2.3) * 7,
+          ay + Math.sin(ang - 2.3) * 7,
+        );
+      }
       const frac = isFinite(r.left) ? Math.max(0, r.left / r.patience) : 1;
       const color = !isFinite(r.left) ? COLORS.bad : sim.frozen ? 0x8ecae6 : r.id === sim.promisedId ? 0x4ea8de : frac > 0.5 ? COLORS.chaosLo : frac > 0.25 ? COLORS.chaosMid : COLORS.chaosHi;
       g.lineStyle(5, 0x22223b, 0.55).strokeCircle(b.pos.x, b.pos.y, 20);
@@ -823,10 +747,10 @@ export class GameScene extends Phaser.Scene {
     this.shhText.setVisible(asleep);
     this.zzz.setVisible(asleep);
     if (!asleep) return;
-    const c = toScreen(COUCH_POS.x, COUCH_POS.y);
+    const c = this.proj(COUCH_POS.x, COUCH_POS.y, 46);
     const g = this.dyn;
     const x = c.x - 40;
-    const y = c.y - 50;
+    const y = c.y - 34;
     const n = sim.nap.noise / 100;
     g.fillStyle(0x22223b, 0.85).fillRoundedRect(x, y, 80, 16, 8);
     g.fillStyle(n > 0.66 ? COLORS.chaosHi : n > 0.33 ? COLORS.chaosMid : COLORS.chaosLo, 1).fillRoundedRect(x + 2, y + 2, Math.max(4, 76 * n), 12, 6);

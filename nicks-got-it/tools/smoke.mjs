@@ -167,7 +167,7 @@ const check = async (label, id) => {
     const s = window.__nick.scene.sim;
     s.requests.push({ id: 7777, kind: 'flip', owner: 'grill', room: 'backyard', patience: 999, left: 999 });
   });
-  await sim(() => Object.assign(window.__nick.scene.sim.nick, { x: 332, y: 84 }));
+  await sim(() => Object.assign(window.__nick.scene.sim.nick, { x: 332, y: 94 }));
   await waitPanel('mash');
   await page.screenshot({ path: `${OUT}/04e-mash.png` });
   await sim(() => (window.__nick.scene.timeScale = 0.05)); // CDP taps are ~1 s apart under software GL

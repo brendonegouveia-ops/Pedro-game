@@ -6,7 +6,7 @@ export default defineConfig({
     target: 'es2020',
     outDir: 'dist',
     assetsInlineLimit: 0,
-    chunkSizeWarningLimit: 1600, // Phaser alone is ~1.2 MB minified
+    chunkSizeWarningLimit: 2000, // Phaser (~1.2 MB) + Three.js (~0.6 MB) minified
   },
   server: { host: true },
   test: { include: ['tests/**/*.test.ts'] },

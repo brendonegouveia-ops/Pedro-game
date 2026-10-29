@@ -90,10 +90,10 @@ export interface StationDef {
 
 export const STATIONS: Record<StationId, StationDef> = {
   // Kitchen counter runs down the left wall.
-  coffee: { room: 'kitchen', label: 'Coffee', x: 18, y: 192 },
-  snacks: { room: 'kitchen', label: 'Snacks', x: 18, y: 238 },
-  juice: { room: 'kitchen', label: 'Juice', x: 18, y: 284 },
-  sippy: { room: 'kitchen', label: 'Sippy', x: 18, y: 330 },
+  coffee: { room: 'kitchen', label: 'Coffee', x: 26, y: 192 },
+  snacks: { room: 'kitchen', label: 'Snacks', x: 26, y: 238 },
+  juice: { room: 'kitchen', label: 'Juice', x: 26, y: 284 },
+  sippy: { room: 'kitchen', label: 'Sippy', x: 26, y: 330 },
   highchair: { room: 'kitchen', label: 'High chair', x: 150, y: 318 },
   thermostat: { room: 'living', label: 'Thermostat', x: 238, y: 180 },
   playpen: { room: 'living', label: 'Playpen', x: 352, y: 222 },
@@ -188,13 +188,31 @@ function circleHitsRect(x: number, y: number, r: number, R: Rect): boolean {
   return (x - cx) ** 2 + (y - cy) ** 2 < r * r;
 }
 
+// Solid furniture (the 3D house shows it, so nobody walks through it). Stations on or beside
+// furniture stay within reach: see MOVE.stationReach.
+export const FURNITURE: Rect[] = [
+  { x: 0, y: 166, w: 34, h: 184 }, // kitchen counter (coffee, snacks, juice, sippy sit on it)
+  { x: 88, y: 226, w: 44, h: 44 }, // kitchen table
+  { x: 232, y: 366, w: 120, h: 40 }, // couch
+  { x: 268, y: 440, w: 48, h: 24 }, // coffee table
+  { x: 244, y: 500, w: 96, h: 14 }, // TV stand
+  { x: 336, y: 206, w: 32, h: 32 }, // playpen
+  { x: 0, y: 356, w: 32, h: 100 }, // garage workbench (band-aids, toolbox)
+  { x: 316, y: 46, w: 32, h: 32 }, // grill
+  { x: 30, y: 56, w: 64, h: 50 }, // sandbox
+  { x: 178, y: 40, w: 16, h: 12 }, // tree trunk
+];
+const SOLIDS: Rect[] = [...WALLS, ...FURNITURE];
+
 export function blocked(x: number, y: number, r: number): boolean {
   if (x < r || y < r || x > WORLD.w - r || y > WORLD.h - r) return true;
-  return WALLS.some((w) => circleHitsRect(x, y, r, w));
+  return SOLIDS.some((w) => circleHitsRect(x, y, r, w));
 }
 
 // Move a circle by (dx, dy), sliding along walls (axis-separated, sub-stepped).
 export function moveCircle(x: number, y: number, dx: number, dy: number, r: number): { x: number; y: number } {
+  // Someone placed inside furniture (e.g. Nora waking on the couch) may walk out freely.
+  if (blocked(x, y, r)) return { x: x + dx, y: y + dy };
   const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / 3));
   const sx = dx / steps;
   const sy = dy / steps;
@@ -210,7 +228,7 @@ export function lineClear(x0: number, y0: number, x1: number, y1: number, r: num
   const n = Math.max(1, Math.ceil(len / 4));
   for (let i = 1; i <= n; i++) {
     const t = i / n;
-    if (WALLS.some((w) => circleHitsRect(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, r, w))) return false;
+    if (SOLIDS.some((w) => circleHitsRect(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, r, w))) return false;
   }
   return true;
 }

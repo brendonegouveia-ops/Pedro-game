@@ -2,11 +2,18 @@
 
 Kayla’s out until 5. Game night at Carlson’s is at 5. Nick said “I got it.”
 
-A mobile-first, top-down browser survival game. Walk Nick around a bird's-eye floor plan of the house and backyard with an on-screen D-pad, and handle every job with a big thumb gesture on the action pad. **Make it to 5:00 PM and Nick goes to game night**; that unlocks the next week, a harder version of the same Saturday. If **Chaos** hits 100 first, game night's off and you retry the week. Desktop works with a keyboard or mouse.
+A mobile-first browser survival game in 3D. A third-person camera follows Nick through the house and backyard; walk him with an on-screen D-pad and handle every job with a big thumb gesture on the action pad. **Make it to 5:00 PM and Nick goes to game night**; that unlocks the next week, a harder version of the same Saturday. If **Chaos** hits 100 first, game night's off and you retry the week. Desktop works with a keyboard or mouse.
 
 The clock runs 1.5 game minutes per real second, so a week is about 5 minutes 20 seconds (9:00 AM to 5:00 PM). Every other timer (request patience, cooldowns, FaceTime, cries) is in real seconds.
 
-Stack: Phaser 3.90 + TypeScript + Vite. Cloudflare Pages hosts the static build, and Pages Functions + D1 run the leaderboard. All art and sound are generated in code: Graphics primitives and WebAudio synthesis, with no image or audio files.
+Stack: Three.js 0.158 (the 3D house, characters and camera) under a transparent Phaser 3.90 layer (HUD, bubbles, D-pad, action pad), TypeScript, Vite. Cloudflare Pages hosts the static build, and Pages Functions + D1 run the leaderboard. All art and sound are generated in code (low-poly primitives, canvas textures, WebAudio synthesis), with no model, image or audio files.
+
+**How the 3D works.** The simulation is still 2D: the floor plan in `src/sim/house.ts` (rooms, walls, doors, furniture, stations) is the ground plane, with sim (x, y) = 3D (x, z) and 1 unit = 1 design px (~40 per meter). `src/three/World3D.ts` builds the house from it and renders it on a canvas underneath Phaser's; the 2D layer places request bubbles, speech and station icon chips by projecting through the 3D camera.
+
+- **Camera.** Behind and above Nick with a fixed heading, so ▲ on the D-pad always walks away from the camera. It eases after him on wall-clock time.
+- **Walls.** Cutaway height (about chest high) so rooms read from above; any wall between the camera and Nick fades out.
+- **Off-screen requests.** Their bubbles pin to the edge of the 3D view with an arrow pointing toward them. A minimap (top right) shows rooms, doorways, Nick (orange), the kids and Eloise, and every request colored by its timer.
+- **Furniture is solid.** Counter, kitchen table, couch, coffee table, TV stand, playpen, workbench, grill, sandbox and the tree trunk block movement; the pathfinder routes around them. Stations on or beside furniture are within the 40 px station reach.
 
 ## Run it locally
 
@@ -32,7 +39,7 @@ The smoke test walks Nick across the house by holding a finger on the grill, the
 
 ## Quick prototype link (no deploy)
 
-`npm run build:artifact` writes one self-contained HTML page (`artifact/nicks-got-it.html`): the game code and CSS are inlined and Phaser loads from jsDelivr (unpkg as a fallback). It can be published as a private claude.ai Artifact and opened on a phone. The leaderboard shows "offline" there, because there are no Pages Functions behind it.
+`npm run build:artifact` writes one self-contained HTML page (`artifact/nicks-got-it.html`): the game code and CSS are inlined; Phaser 3.90.0 and Three.js 0.158.0 (the last release with the `build/three.min.js` global build) load from jsDelivr, with unpkg as a fallback. It can be published as a private claude.ai Artifact and opened on a phone. The leaderboard shows "offline" there, because there are no Pages Functions behind it.
 
 ## Deploy to Cloudflare Pages
 
@@ -88,6 +95,7 @@ An idle player loses around 11:40 AM. The fastest knobs are `WEEKS` (per-week st
 
 ## Interpretations and deviations from the brief
 
+- **3D, third person.** The brief asked for a portrait 2D cross-section; this version renders a 3D house with a follow camera. Rules, timers, gestures and the 390×844 portrait layout are unchanged.
 - **Free movement replaces the tap-to-queue loop.** The original brief had a 4-item action queue with numbered markers, a route line, and 0.5 s room hops. That's gone: you walk Nick with a D-pad and jobs trigger by proximity. The brief's one-thumb rule is relaxed: the D-pad and action pad are meant for two thumbs (one at a time still works).
 - **Weeks and a 5:00 PM goal replace the open-ended score.** The brief scored a run by the clock time when Chaos hit 100. Now you survive to 5:00 PM to win the week; the leaderboard ranks runs by week, then by the clock time reached. The 6:00 PM "running late" text became the week-3+ 4:45 PM delay. The clock runs 1.5× faster than the brief's 1 s = 1 min, so a week is ~5 minutes.
 
@@ -110,9 +118,11 @@ An idle player loses around 11:40 AM. The fastest knobs are `WEEKS` (per-week st
 src/config.ts          cast, tuning, timeline, jokes, copy
 src/sim/house.ts       floor plan: rooms, walls, doors, stations, collision, steering
 src/sim/sim.ts         pure simulation (movement, jobs, rules, timeline)
-src/game/GameScene.ts  rendering, hold-to-walk input, HUD, ability bar, overlays
+src/three/World3D.ts   3D house, furniture, stations, lights, follow camera, wall fading, highlight rings, projection
+src/three/models.ts    low-poly Nick, Evelyn, Tyler, Nora, Eloise (walk cycles) + held items
+src/game/GameScene.ts  2D overlay: HUD, D-pad, ability bar, projected bubbles/speech/chips, edge arrows, minimap
 src/game/panel.ts      Action Panel gestures
-src/game/art.ts        procedural characters, icons, top-down floor plan
+src/game/art.ts        2D icons (bubbles, chips, panel) and the FaceTime face
 src/audio.ts           WebAudio SFX (groan, smoke alarm, cry, sizzle, bark, UI)
 src/main.ts            viewport/safe-area handling, overlays, pause, leaderboard UI
 functions/             Pages Functions (leaderboard) + schema.sql

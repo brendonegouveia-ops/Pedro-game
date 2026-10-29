@@ -6,6 +6,7 @@ import { buzz, hapticsSupported, setHaptics } from './haptics';
 import { beginRun, submitScore, topScores, type ScoreRow } from './leaderboard';
 import { load, save } from './storage';
 import { GameScene } from './game/GameScene';
+import { World3D } from './three/World3D';
 import { H, W } from './game/layout';
 import { clockString, type Sim } from './sim/sim';
 
@@ -56,7 +57,7 @@ const game = new Phaser.Game({
   parent: 'game',
   width: W * R,
   height: H * R,
-  backgroundColor: '#1d1f2b',
+  transparent: true, // the 3D house renders on a canvas underneath
   scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
   input: { activePointers: 2, touch: { capture: true } }, // two thumbs: D-pad + action pad
   render: { antialias: true, roundPixels: false },
@@ -69,6 +70,28 @@ let runId: string | null = null;
 let lastSim: Sim | null = null;
 let paused = false;
 let playing = false;
+
+// ---------------------------------------------------------------- 3D layer
+// A second canvas behind Phaser's, matched to its size and position every frame.
+const threeCanvas = document.createElement('canvas');
+threeCanvas.id = 'three';
+$('game').prepend(threeCanvas);
+const world = new World3D(threeCanvas);
+scene.world = world;
+let lastRect = '';
+game.events.on('prerender', () => {
+  const c = game.canvas;
+  const key = `${c.offsetLeft},${c.offsetTop},${c.clientWidth},${c.clientHeight}`;
+  if (key === lastRect) return;
+  lastRect = key;
+  Object.assign(threeCanvas.style, {
+    left: `${c.offsetLeft}px`,
+    top: `${c.offsetTop}px`,
+    width: `${c.clientWidth}px`,
+    height: `${c.clientHeight}px`,
+  });
+  world.resize(c.clientWidth, c.clientHeight);
+});
 
 game.events.once('scene-ready', () => {
   scene.hooks = {
