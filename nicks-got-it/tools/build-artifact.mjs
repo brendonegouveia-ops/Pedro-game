@@ -1,13 +1,17 @@
 // Builds a single self-contained HTML page for publishing as a claude.ai Artifact:
 // game code + CSS inlined; Phaser and Three.js load from a CDN (jsDelivr, with unpkg as fallback)
 // and are read from their globals (window.Phaser, window.THREE).
-// Usage: node tools/build-artifact.mjs [outFile]
+// Usage: node tools/build-artifact.mjs [outFile] [--standalone]
+//   --standalone writes a complete HTML document (for GitHub Pages or any static host);
+//   without it the output is a body fragment for a claude.ai Artifact, whose host adds <html>/<head>.
 import { build } from 'esbuild';
 import fs from 'node:fs';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-const out = process.argv[2] ?? path.join(root, 'artifact', 'nicks-got-it.html');
+const args = process.argv.slice(2);
+const standalone = args.includes('--standalone');
+const out = args.find((a) => !a.startsWith('--')) ?? path.join(root, 'artifact', 'nicks-got-it.html');
 const PHASER = '3.90.0';
 const THREE = '0.158.0'; // last line with the UMD build (build/three.min.js)
 const GLOBALS = { phaser: 'Phaser', three: 'THREE' };
@@ -74,6 +78,24 @@ ${body}
 </script>
 <script type="text/plain" id="game-src">${js}</script>
 `;
+const doc = standalone
+  ? `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#2b2d42" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="description" content="Kayla’s out until 5. Game night’s at 5. Nick said “I got it.” A one-thumb dad-survival game." />
+<meta property="og:title" content="Nick's Got It" />
+<meta property="og:description" content="Survive Saturday with the kids until 5:00 PM so Nick can make game night." />
+<title>Nick's Got It</title>
+</head>
+<body>
+${page.replace(/^<title>.*?<\/title>\n/, '')}</body>
+</html>
+`
+  : page;
 fs.mkdirSync(path.dirname(out), { recursive: true });
-fs.writeFileSync(out, page);
+fs.writeFileSync(out, doc);
 console.log(out, (page.length / 1024).toFixed(0) + ' KB');

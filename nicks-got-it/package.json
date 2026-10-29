@@ -13,6 +13,7 @@
     "balance": "vitest run tests/balance.test.ts --reporter=verbose",
     "smoke": "node tools/smoke.mjs",
     "build:artifact": "node tools/build-artifact.mjs",
+    "build:pages": "node tools/build-artifact.mjs ../nick/index.html --standalone",
     "pages:dev": "npm run build && wrangler pages dev dist --d1 DB=nicks-got-it",
     "db:migrate:local": "wrangler d1 execute nicks-got-it --local --file=schema.sql",
     "db:migrate:remote": "wrangler d1 execute nicks-got-it --remote --file=schema.sql",

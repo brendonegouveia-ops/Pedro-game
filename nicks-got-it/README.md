@@ -37,6 +37,18 @@ npm run smoke -- http://localhost:4173/   # Playwright, iPhone 13 profile, real 
 
 The smoke test walks Nick across the house by holding a finger on the grill, then drives every gesture (TAP, HOLD, RUB, SWIPE, MASH, choice, tap-each-kid) end to end with CDP touch events. It also checks Dad Joke, FaceTime “uh-huh”, pause on blur, the end card and the landscape rotate overlay. When `/api` is served, it also posts a score that should be rejected (a fast-forwarded run) and an honest one that should be accepted. Screenshots go to `test-results/`.
 
+## Shareable link (GitHub Pages)
+
+**Play:** https://brendonegouveia-ops.github.io/pedro-game/nick/
+
+The repo's GitHub Pages site serves `nick/index.html` from `main`. It's one self-contained file built from this project, so after changing the game, rebuild it and commit it with your change:
+
+```bash
+npm run build:pages   # writes ../nick/index.html
+```
+
+That page has no backend, so the leaderboard shows "offline" there; progress and best runs are saved on each player's device. The full leaderboard needs the Cloudflare deploy below.
+
 ## Quick prototype link (no deploy)
 
 `npm run build:artifact` writes one self-contained HTML page (`artifact/nicks-got-it.html`): the game code and CSS are inlined; Phaser 3.90.0 and Three.js 0.158.0 (the last release with the `build/three.min.js` global build) load from jsDelivr, with unpkg as a fallback. It can be published as a private claude.ai Artifact and opened on a phone. The leaderboard shows "offline" there, because there are no Pages Functions behind it.
