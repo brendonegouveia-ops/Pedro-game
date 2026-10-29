@@ -2,8 +2,6 @@
 
 **Play it:** https://brendonegouveia-ops.github.io/pedro-game/
 
-**Also in this repo:** *Nick's Got It*, the second game-night game (survive Saturday with the kids until 5:00 PM). Play it at https://brendonegouveia-ops.github.io/pedro-game/nick/ (source in `nicks-got-it/`).
-
 3D lane-dodger. Pedro is driving his brand-new silver Jetta to game night at Carlson's, way too fast, every week.
 
 - **Weeks are levels.** Each week is one drive to game night: Week 1 is 10 miles, Week 2 is 12, and so on (+2 mi a week, capped at 25). Every week starts further up the difficulty curve and tops out faster (165 mph in Week 1, +3 mph a week up to 195). Each week's game night has its own theme (Catan night, Poker night, Mario Kart night…).
